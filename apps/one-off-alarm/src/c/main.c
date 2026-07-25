@@ -67,13 +67,17 @@ static time_t compute_target_timestamp(void) {
 static void update_display(void) {
   switch (s_mode) {
     case MODE_SETUP: {
+      time_t target = compute_target_timestamp();
+      char date_buf[32];
+      strftime(date_buf, sizeof(date_buf), "%a %d %b %H:%M", localtime(&target));
       snprintf(s_title_buf, sizeof(s_title_buf), "New Alarm");
       snprintf(s_value_buf, sizeof(s_value_buf),
-        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%c Vibe  %s",
+        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%c Vibe  %s\n%s",
         s_field == FIELD_DAYS ? '>' : ' ', s_days,
         s_field == FIELD_HOUR ? '>' : ' ', s_hour,
         s_field == FIELD_MINUTE ? '>' : ' ', s_minute,
-        s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity]);
+        s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity],
+        date_buf);
       snprintf(s_hint_buf, sizeof(s_hint_buf),
         "UP/DN: value  SELECT: next\nHold SELECT: set alarm");
       break;
@@ -283,17 +287,17 @@ static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_title_layer = text_layer_create(GRect(0, 4, bounds.size.w, 38));
+  s_title_layer = text_layer_create(GRect(0, 4, bounds.size.w, 36));
   text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK));
   text_layer_set_text_alignment(s_title_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_title_layer));
 
-  s_value_layer = text_layer_create(GRect(0, 44, bounds.size.w, bounds.size.h - 84));
-  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  s_value_layer = text_layer_create(GRect(0, 42, bounds.size.w, bounds.size.h - 78));
+  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
   text_layer_set_text_alignment(s_value_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_value_layer));
 
-  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 40, bounds.size.w, 40));
+  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 36, bounds.size.w, 36));
   text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_hint_layer));
