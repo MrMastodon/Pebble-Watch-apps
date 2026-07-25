@@ -77,7 +77,7 @@ https://github.com/MrMastodon/Pebble-Watch-apps/tree/main/apps/one-off-alarm
 ## Icons
 
 - `icon-small.png` — 80×80, for the `--icon-small` flag / iconSmall upload field.
-- `icon-large.png` — 144×168, for the `--icon-large` flag / iconLarge upload field.
+- `icon-large.png` — 144×144, for the `--icon-large` flag / iconLarge upload field.
 
 ## Banner
 
