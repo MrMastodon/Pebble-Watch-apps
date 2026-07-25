@@ -5,6 +5,10 @@ platform), built with [Core Devices'](https://developer.repebble.com/) Pebble
 SDK. Each app solves one narrow, self-contained problem — no companion app,
 no shared code between them.
 
+> **Note:** this repo is vibe-coded — written by prompting Claude rather than
+> hand-written line by line. Code and READMEs are reviewed and built/tested
+> before being committed, but keep that in mind if something looks off.
+
 ## Project layout
 
 Every app lives in its own folder under `apps/`, and is a complete,
