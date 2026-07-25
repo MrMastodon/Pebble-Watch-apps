@@ -54,6 +54,14 @@ https://github.com/MrMastodon/Pebble-Watch-apps/tree/main/apps/one-off-alarm
 - `icon-small.png` — 80×80, for the `--icon-small` flag / iconSmall upload field.
 - `icon-large.png` — 144×168, for the `--icon-large` flag / iconLarge upload field.
 
+## Banner
+
+- `banner.png` — 720×320, shown above the screenshots on the store page.
+  Required for apps (optional for watchfaces). `pebble publish` has no
+  `--banner` flag, so upload this one through the web dashboard
+  (CloudPebble/Rebble developer portal) after the app is created, or if
+  the interactive `pebble publish` prompt asks for it directly.
+
 ## Example command
 
 ```sh
