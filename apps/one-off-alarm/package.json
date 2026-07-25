@@ -1,0 +1,22 @@
+{
+  "name": "one-off-alarm",
+  "version": "1.0.0",
+  "description": "Set a single wake-up alarm for a specific future date and time (not a recurring daily alarm).",
+  "private": true,
+  "keywords": ["pebble-app"],
+  "dependencies": {},
+  "pebble": {
+    "displayName": "One-Off Alarm",
+    "uuid": "f63e4de5-9978-4da7-940b-4ed42be092de",
+    "sdkVersion": "3",
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "resources": {
+      "media": []
+    }
+  }
+}
