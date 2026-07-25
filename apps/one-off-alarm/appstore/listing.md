@@ -53,8 +53,19 @@ Initial release.
 - Choose Mild, Medium, or Aggressive vibration when the alarm fires -
   each pattern plays instantly as you pick it, so you know what to
   expect.
-- The alarm still fires correctly even if the app is left open on the
-  countdown screen when it's due.
+
+Reliability - what makes sure it actually wakes you up:
+- Uses the watch's built-in Wakeup system, so the alarm is scheduled
+  at the OS level - it still fires even if you close the app or the
+  watch reboots in the meantime.
+- Handles both ways the watch can deliver the alarm: a fresh launch
+  when the app is closed, and a direct signal when the app happens to
+  already be open (e.g. left on the countdown screen). Earlier builds
+  only handled the first case, which meant the alarm could silently
+  fail to go off in that second scenario - this is now fixed.
+- Requires at least 30 seconds of lead time when scheduling, per a
+  watch OS limit, and warns you on-screen if you pick a time too close
+  to "now" instead of silently failing.
 ```
 
 ## Source URL
