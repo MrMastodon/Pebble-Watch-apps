@@ -68,7 +68,7 @@ static void update_display(void) {
         s_field == FIELD_MINUTE ? '>' : ' ', s_minute,
         date_buf);
       snprintf(s_hint_buf, sizeof(s_hint_buf),
-        "UP/DOWN: change\nSELECT: next field\nHold SELECT: set");
+        "UP/DN: value  SELECT: next\nHold SELECT: set alarm");
       break;
     }
     case MODE_ALARM_SET: {
@@ -235,18 +235,18 @@ static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_title_layer = text_layer_create(GRect(0, 8, bounds.size.w, 30));
-  text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  s_title_layer = text_layer_create(GRect(0, 6, bounds.size.w, 36));
+  text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_title_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_title_layer));
 
-  s_value_layer = text_layer_create(GRect(0, 42, bounds.size.w, bounds.size.h - 90));
-  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  s_value_layer = text_layer_create(GRect(0, 44, bounds.size.w, bounds.size.h - 90));
+  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
   text_layer_set_text_alignment(s_value_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_value_layer));
 
-  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 44, bounds.size.w, 44));
-  text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 46, bounds.size.w, 46));
+  text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_hint_layer));
 
