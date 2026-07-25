@@ -1,7 +1,7 @@
 #include <pebble.h>
 
 // Schedules ONE wake-up alarm for an arbitrary point in the future (e.g. "in
-// 21 days at 09:00"), using the Wakeup API so the watch relaunches this app
+// 1 day at 09:00"), using the Wakeup API so the watch relaunches this app
 // and vibrates even if it was closed in the meantime. This is not a
 // recurring daily alarm - it fires once, then the alarm is cleared.
 
@@ -21,7 +21,7 @@ static TextLayer *s_hint_layer;
 
 static AppMode s_mode;
 static SetupField s_field = FIELD_DAYS;
-static int s_days = 21;
+static int s_days = 1;
 static int s_hour = 9;
 static int s_minute = 0;
 
@@ -62,7 +62,7 @@ static void update_display(void) {
       strftime(date_buf, sizeof(date_buf), "%a %d %b %H:%M", localtime(&target));
       snprintf(s_title_buf, sizeof(s_title_buf), "New Alarm");
       snprintf(s_value_buf, sizeof(s_value_buf),
-        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n\n%s",
+        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%s",
         s_field == FIELD_DAYS ? '>' : ' ', s_days,
         s_field == FIELD_HOUR ? '>' : ' ', s_hour,
         s_field == FIELD_MINUTE ? '>' : ' ', s_minute,
@@ -84,7 +84,7 @@ static void update_display(void) {
       int h = (secs_left % 86400) / 3600;
       int m = (secs_left % 3600) / 60;
       snprintf(s_title_buf, sizeof(s_title_buf), "Alarm Set");
-      snprintf(s_value_buf, sizeof(s_value_buf), "%s\n\nin %dd %dh %dm", date_buf, d, h, m);
+      snprintf(s_value_buf, sizeof(s_value_buf), "%s\nin %dd %dh %dm", date_buf, d, h, m);
       snprintf(s_hint_buf, sizeof(s_hint_buf), "SELECT: cancel alarm");
       break;
     }
@@ -235,18 +235,18 @@ static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_title_layer = text_layer_create(GRect(0, 6, bounds.size.w, 36));
-  text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  s_title_layer = text_layer_create(GRect(0, 4, bounds.size.w, 38));
+  text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_BITHAM_30_BLACK));
   text_layer_set_text_alignment(s_title_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_title_layer));
 
-  s_value_layer = text_layer_create(GRect(0, 44, bounds.size.w, bounds.size.h - 90));
-  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
+  s_value_layer = text_layer_create(GRect(0, 44, bounds.size.w, bounds.size.h - 84));
+  text_layer_set_font(s_value_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_value_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_value_layer));
 
-  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 46, bounds.size.w, 46));
-  text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  s_hint_layer = text_layer_create(GRect(0, bounds.size.h - 40, bounds.size.w, 40));
+  text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_hint_layer));
 
