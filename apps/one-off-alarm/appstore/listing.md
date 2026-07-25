@@ -43,6 +43,20 @@ you've closed the app in the meantime - no phone required at the time it
 fires.
 ```
 
+## Release notes (v1.0)
+
+```
+Initial release.
+
+- Set a one-off wake-up alarm for any future day and time (not a
+  recurring daily alarm).
+- Choose Mild, Medium, or Aggressive vibration when the alarm fires -
+  each pattern plays instantly as you pick it, so you know what to
+  expect.
+- The alarm still fires correctly even if the app is left open on the
+  countdown screen when it's due.
+```
+
 ## Source URL
 
 ```
@@ -72,6 +86,7 @@ pebble publish \
   --version 1.0 \
   --description "Set a single wake-up alarm for any future date - not just a recurring daily one." \
   --category tools \
+  --release-notes "Initial release: one-off wake-up alarms with Mild/Medium/Aggressive vibration." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```
