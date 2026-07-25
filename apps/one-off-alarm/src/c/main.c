@@ -8,11 +8,20 @@
 #define ALARM_COOKIE 0
 #define PERSIST_KEY_WAKEUP_ID 100
 #define PERSIST_KEY_TARGET_TS 101
+#define PERSIST_KEY_INTENSITY 102
 #define MINUTE_STEP 5
-#define VIBE_INTERVAL_MS 2000
 
 typedef enum { MODE_SETUP, MODE_ALARM_SET, MODE_FIRING } AppMode;
-typedef enum { FIELD_DAYS, FIELD_HOUR, FIELD_MINUTE, NUM_FIELDS } SetupField;
+typedef enum { FIELD_DAYS, FIELD_HOUR, FIELD_MINUTE, FIELD_INTENSITY, NUM_FIELDS } SetupField;
+typedef enum { VIBE_MILD, VIBE_MEDIUM, VIBE_AGGRESSIVE, NUM_VIBE_INTENSITIES } VibeIntensity;
+
+static const char *const VIBE_INTENSITY_NAMES[NUM_VIBE_INTENSITIES] = {
+  "Mild", "Medium", "Aggressive"
+};
+// How often the alarm re-vibrates while firing, per intensity.
+static const uint32_t VIBE_INTENSITY_INTERVAL_MS[NUM_VIBE_INTENSITIES] = {
+  4000, 2000, 1000
+};
 
 static Window *s_window;
 static TextLayer *s_title_layer;
@@ -24,6 +33,7 @@ static SetupField s_field = FIELD_DAYS;
 static int s_days = 1;
 static int s_hour = 9;
 static int s_minute = 0;
+static VibeIntensity s_intensity = VIBE_MEDIUM;
 
 static AppTimer *s_vibe_timer;
 
@@ -57,16 +67,13 @@ static time_t compute_target_timestamp(void) {
 static void update_display(void) {
   switch (s_mode) {
     case MODE_SETUP: {
-      time_t target = compute_target_timestamp();
-      char date_buf[32];
-      strftime(date_buf, sizeof(date_buf), "%a %d %b %H:%M", localtime(&target));
       snprintf(s_title_buf, sizeof(s_title_buf), "New Alarm");
       snprintf(s_value_buf, sizeof(s_value_buf),
-        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%s",
+        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%c Vibe  %s",
         s_field == FIELD_DAYS ? '>' : ' ', s_days,
         s_field == FIELD_HOUR ? '>' : ' ', s_hour,
         s_field == FIELD_MINUTE ? '>' : ' ', s_minute,
-        date_buf);
+        s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity]);
       snprintf(s_hint_buf, sizeof(s_hint_buf),
         "UP/DN: value  SELECT: next\nHold SELECT: set alarm");
       break;
@@ -139,6 +146,7 @@ static void schedule_alarm(void) {
 
   persist_write_int(PERSIST_KEY_WAKEUP_ID, (int)id);
   persist_write_int(PERSIST_KEY_TARGET_TS, (int)target);
+  persist_write_int(PERSIST_KEY_INTENSITY, (int)s_intensity);
   s_mode = MODE_ALARM_SET;
   apply_mode();
 }
@@ -153,26 +161,62 @@ static void cancel_alarm(void) {
   apply_mode();
 }
 
+static void play_vibe(VibeIntensity intensity) {
+  switch (intensity) {
+    case VIBE_MILD:
+      vibes_short_pulse();
+      break;
+    case VIBE_MEDIUM:
+      vibes_double_pulse();
+      break;
+    case VIBE_AGGRESSIVE: {
+      static const uint32_t segments[] = { 150, 100, 150, 100, 150, 100, 300 };
+      VibePattern pattern = {
+        .durations = segments,
+        .num_segments = ARRAY_LENGTH(segments),
+      };
+      vibes_enqueue_custom_pattern(pattern);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
 static void vibe_timer_callback(void *data) {
-  vibes_double_pulse();
-  s_vibe_timer = app_timer_register(VIBE_INTERVAL_MS, vibe_timer_callback, NULL);
+  play_vibe(s_intensity);
+  s_vibe_timer = app_timer_register(VIBE_INTENSITY_INTERVAL_MS[s_intensity], vibe_timer_callback, NULL);
 }
 
 static void enter_firing_mode(void) {
   clear_persisted_alarm();
   s_mode = MODE_FIRING;
   apply_mode();
-  vibes_double_pulse();
-  s_vibe_timer = app_timer_register(VIBE_INTERVAL_MS, vibe_timer_callback, NULL);
+  play_vibe(s_intensity);
+  s_vibe_timer = app_timer_register(VIBE_INTENSITY_INTERVAL_MS[s_intensity], vibe_timer_callback, NULL);
 }
 
-// --- Setup mode: pick "in N days at HH:MM" ---
+// A wakeup can also fire while this app is already running (e.g. left open
+// on the countdown screen) - the system delivers it here instead of
+// relaunching the app, so this is required in addition to the
+// launch_reason() check in init() below.
+static void wakeup_handler(WakeupId id, int32_t cookie) {
+  if (cookie == ALARM_COOKIE) {
+    enter_firing_mode();
+  }
+}
+
+// --- Setup mode: pick "in N days at HH:MM", plus vibration intensity ---
 
 static void setup_up_click_handler(ClickRecognizerRef recognizer, void *context) {
   switch (s_field) {
     case FIELD_DAYS: s_days = wrap(s_days + 1, 0, 181); break;
     case FIELD_HOUR: s_hour = wrap(s_hour + 1, 0, 24); break;
     case FIELD_MINUTE: s_minute = wrap(s_minute + MINUTE_STEP, 0, 60); break;
+    case FIELD_INTENSITY:
+      s_intensity = (VibeIntensity)wrap(s_intensity + 1, 0, NUM_VIBE_INTENSITIES);
+      play_vibe(s_intensity);
+      break;
     default: break;
   }
   update_display();
@@ -183,6 +227,10 @@ static void setup_down_click_handler(ClickRecognizerRef recognizer, void *contex
     case FIELD_DAYS: s_days = wrap(s_days - 1, 0, 181); break;
     case FIELD_HOUR: s_hour = wrap(s_hour - 1, 0, 24); break;
     case FIELD_MINUTE: s_minute = wrap(s_minute - MINUTE_STEP, 0, 60); break;
+    case FIELD_INTENSITY:
+      s_intensity = (VibeIntensity)wrap(s_intensity - 1, 0, NUM_VIBE_INTENSITIES);
+      play_vibe(s_intensity);
+      break;
     default: break;
   }
   update_display();
@@ -250,6 +298,10 @@ static void window_load(Window *window) {
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_hint_layer));
 
+  if (persist_exists(PERSIST_KEY_INTENSITY)) {
+    s_intensity = (VibeIntensity)persist_read_int(PERSIST_KEY_INTENSITY);
+  }
+
   if (persist_exists(PERSIST_KEY_WAKEUP_ID)) {
     WakeupId id = (WakeupId)persist_read_int(PERSIST_KEY_WAKEUP_ID);
     time_t ts;
@@ -287,6 +339,8 @@ static void init(void) {
       enter_firing_mode();
     }
   }
+
+  wakeup_service_subscribe(wakeup_handler);
 }
 
 static void deinit(void) {

@@ -1,21 +1,26 @@
 # One-Off Alarm
 
 A watchapp for setting a single wake-up alarm on a specific future date and
-time — for example "wake me up in 21 days at 09:00" — rather than a
+time — for example "wake me up in 1 day at 09:00" — rather than a
 recurring daily alarm like the built-in Alarms app.
 
 It uses the Pebble [Wakeup API](https://developer.repebble.com/guides/events-and-services/wakeups/)
 to schedule the watch to relaunch this app at the chosen moment and vibrate,
-even if the app has been closed in the meantime.
+even if the app has been closed in the meantime. It also subscribes to
+wakeup events while running (`wakeup_service_subscribe`), so the alarm still
+fires correctly even if you happen to have the app open on the countdown
+screen at the exact moment it's due — not just when it's launched fresh.
 
 ## Using it
 
 - **UP / DOWN** — change the value of the highlighted field.
-- **SELECT (short press)** — move to the next field (Days → Hour → Minute).
+- **SELECT (short press)** — move to the next field (Days → Hour → Minute → Vibe).
 - **SELECT (hold)** — confirm and schedule the alarm.
 
-The screen always shows the resulting absolute date/time so you can double
-check it before confirming.
+The last field, **Vibe**, picks how the alarm vibrates when it fires — Mild,
+Medium, or Aggressive (each with its own pattern and repeat interval).
+Changing it with UP/DOWN immediately plays that pattern once, so you can
+feel the difference before committing to it.
 
 Once set, the app shows a countdown and a **SELECT** to cancel. When the
 alarm fires, any button dismisses it.
