@@ -64,8 +64,8 @@ pebble publish \
   --version 1.0 \
   --description "Set a single wake-up alarm for any future date - not just a recurring daily one." \
   --category tools \
-  --icon-small ../../appstore/one-off-alarm/icon-small.png \
-  --icon-large ../../appstore/one-off-alarm/icon-large.png
+  --icon-small appstore/icon-small.png \
+  --icon-large appstore/icon-large.png
 ```
 
 Running it without the flags works too — `pebble publish` will prompt
