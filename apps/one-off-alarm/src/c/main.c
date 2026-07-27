@@ -96,7 +96,7 @@ static void update_display(void) {
       int m = (secs_left % 3600) / 60;
       snprintf(s_title_buf, sizeof(s_title_buf), "Alarm Set");
       snprintf(s_value_buf, sizeof(s_value_buf), "%s\nin %dd %dh %dm", date_buf, d, h, m);
-      snprintf(s_hint_buf, sizeof(s_hint_buf), "SELECT: cancel alarm");
+      snprintf(s_hint_buf, sizeof(s_hint_buf), "Hold SELECT\nto cancel");
       break;
     }
     case MODE_FIRING: {
@@ -258,12 +258,12 @@ static void setup_click_config_provider(void *context) {
 
 // --- Alarm-set mode: show countdown, allow cancelling ---
 
-static void alarm_set_select_click_handler(ClickRecognizerRef recognizer, void *context) {
+static void alarm_set_select_long_click_handler(ClickRecognizerRef recognizer, void *context) {
   cancel_alarm();
 }
 
 static void alarm_set_click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_SELECT, alarm_set_select_click_handler);
+  window_long_click_subscribe(BUTTON_ID_SELECT, 700, alarm_set_select_long_click_handler, NULL);
 }
 
 // --- Firing mode: any button dismisses the alarm ---

@@ -22,8 +22,9 @@ Medium, or Aggressive (each with its own pattern and repeat interval).
 Changing it with UP/DOWN immediately plays that pattern once, so you can
 feel the difference before committing to it.
 
-Once set, the app shows a countdown and a **SELECT** to cancel. When the
-alarm fires, any button dismisses it.
+Once set, the app shows a countdown; **hold SELECT** to cancel it (a short
+press is intentionally ignored, so you don't cancel it by accident). When
+the alarm fires, any button dismisses it.
 
 ## Limitations
 
