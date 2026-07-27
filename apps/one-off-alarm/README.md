@@ -13,9 +13,28 @@ screen at the exact moment it's due — not just when it's launched fresh.
 
 ## Using it
 
-- **UP / DOWN** — change the value of the highlighted field.
-- **SELECT (short press)** — move to the next field (Days → Hour → Minute → Vibe).
+The setup screen looks like this, with `>` marking the row you're editing:
+
+```
+      New Alarm
+
+  > In 3 days
+    At      09:00
+    Vibe    Medium
+
+   Wed 15 Aug 09:00
+```
+
+- **UP / DOWN** — change the value of the highlighted row.
+- **SELECT (short press)** — move to the next field (day → hour → minute → Vibe).
 - **SELECT (hold)** — confirm and schedule the alarm.
+
+Note that the day is **relative** ("Today", "Tomorrow", "In 3 days") while the
+time is an **absolute** clock time ("At 09:00") — so "In 3 days / At 09:00"
+means 9 in the morning, three days from now, not "3 days and 9 hours from
+now". The bottom line always resolves it to a full date so you can check
+before confirming. Hour and minute share the `At` row; brackets show which of
+the two you're editing.
 
 The last field, **Vibe**, picks how the alarm vibrates when it fires — Mild,
 Medium, or Aggressive (each with its own pattern and repeat interval).
@@ -24,7 +43,9 @@ feel the difference before committing to it.
 
 Once set, the app shows a countdown; **hold SELECT** to cancel it (a short
 press is intentionally ignored, so you don't cancel it by accident). When
-the alarm fires, any button dismisses it.
+the alarm fires, any button dismisses it. If nobody does, it stops vibrating
+after 5 minutes rather than draining the battery, and the screen switches to
+"Alarm Rang / at 09:00" so you can see that it went off and when.
 
 While an alarm is set, the watch's app menu also shows a live countdown
 under the app's name (e.g. "1d 4h left") using the [App Glance](https://developer.repebble.com/guides/user-interfaces/appglance-c/)

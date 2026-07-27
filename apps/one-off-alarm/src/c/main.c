@@ -11,6 +11,10 @@
 #define PERSIST_KEY_TARGET_TS 101
 #define PERSIST_KEY_INTENSITY 102
 #define MINUTE_STEP 5
+// How long the alarm keeps vibrating before giving up. Without a cap it would
+// buzz every 1-4 seconds until the battery died - a real failure mode for an
+// app whose whole point is to still be working weeks from now.
+#define VIBE_TIMEOUT_SEC 300
 
 typedef enum { MODE_SETUP, MODE_ALARM_SET, MODE_FIRING } AppMode;
 typedef enum { FIELD_DAYS, FIELD_HOUR, FIELD_MINUTE, FIELD_INTENSITY, NUM_FIELDS } SetupField;
@@ -37,6 +41,8 @@ static int s_minute = 0;
 static VibeIntensity s_intensity = VIBE_MEDIUM;
 
 static AppTimer *s_vibe_timer;
+static time_t s_fired_at;
+static bool s_vibe_timed_out;
 
 static char s_title_buf[32];
 static char s_value_buf[160];
@@ -71,12 +77,36 @@ static void update_display(void) {
       time_t target = compute_target_timestamp();
       char date_buf[32];
       strftime(date_buf, sizeof(date_buf), "%a %d %b %H:%M", localtime(&target));
+
+      // The day count is relative ("3 days from now") while the time is an
+      // absolute wall clock ("at 09:00"). Spelling both out in plain words is
+      // what makes that distinction visible - a uniform "Days/Hour/Min" list
+      // reads as if you were dialling in one duration.
+      char day_buf[16];
+      if (s_days == 0) {
+        snprintf(day_buf, sizeof(day_buf), "Today");
+      } else if (s_days == 1) {
+        snprintf(day_buf, sizeof(day_buf), "Tomorrow");
+      } else {
+        snprintf(day_buf, sizeof(day_buf), "In %d days", s_days);
+      }
+
+      // Hour and minute share one row, so the row-leading '>' can't say which
+      // of the two is being edited - brackets around the active half do.
+      char time_buf[16];
+      if (s_field == FIELD_HOUR) {
+        snprintf(time_buf, sizeof(time_buf), "[%02d]:%02d", s_hour, s_minute);
+      } else if (s_field == FIELD_MINUTE) {
+        snprintf(time_buf, sizeof(time_buf), "%02d:[%02d]", s_hour, s_minute);
+      } else {
+        snprintf(time_buf, sizeof(time_buf), "%02d:%02d", s_hour, s_minute);
+      }
+
       snprintf(s_title_buf, sizeof(s_title_buf), "New Alarm");
       snprintf(s_value_buf, sizeof(s_value_buf),
-        "%c Days  %d\n%c Hour  %02d\n%c Min   %02d\n%c Vibe  %s\n%s",
-        s_field == FIELD_DAYS ? '>' : ' ', s_days,
-        s_field == FIELD_HOUR ? '>' : ' ', s_hour,
-        s_field == FIELD_MINUTE ? '>' : ' ', s_minute,
+        "%c %s\n%c At  %s\n%c Vibe %s\n%s",
+        s_field == FIELD_DAYS ? '>' : ' ', day_buf,
+        (s_field == FIELD_HOUR || s_field == FIELD_MINUTE) ? '>' : ' ', time_buf,
         s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity],
         date_buf);
       snprintf(s_hint_buf, sizeof(s_hint_buf),
@@ -101,9 +131,20 @@ static void update_display(void) {
       break;
     }
     case MODE_FIRING: {
-      snprintf(s_title_buf, sizeof(s_title_buf), "WAKE UP!");
-      snprintf(s_value_buf, sizeof(s_value_buf), "Time to get up!");
-      snprintf(s_hint_buf, sizeof(s_hint_buf), "Press any button\nto stop");
+      if (s_vibe_timed_out) {
+        // Vibration gave up on its own. Say so, and say when it rang - leaving
+        // "Press any button to stop" up while nothing is buzzing would just be
+        // confusing, and the time is useful if you slept through it.
+        char rang_buf[16];
+        strftime(rang_buf, sizeof(rang_buf), "%H:%M", localtime(&s_fired_at));
+        snprintf(s_title_buf, sizeof(s_title_buf), "Alarm Rang");
+        snprintf(s_value_buf, sizeof(s_value_buf), "at %s", rang_buf);
+        snprintf(s_hint_buf, sizeof(s_hint_buf), "Press any button");
+      } else {
+        snprintf(s_title_buf, sizeof(s_title_buf), "WAKE UP!");
+        snprintf(s_value_buf, sizeof(s_value_buf), "Time to get up!");
+        snprintf(s_hint_buf, sizeof(s_hint_buf), "Press any button\nto stop");
+      }
       break;
     }
   }
@@ -266,12 +307,27 @@ static void play_vibe(VibeIntensity intensity) {
 }
 
 static void vibe_timer_callback(void *data) {
+  if (time(NULL) - s_fired_at >= VIBE_TIMEOUT_SEC) {
+    // Stop rather than re-arming: an alarm nobody dismisses must not keep
+    // draining the battery indefinitely.
+    s_vibe_timer = NULL;
+    s_vibe_timed_out = true;
+    update_display();
+    return;
+  }
   play_vibe(s_intensity);
   s_vibe_timer = app_timer_register(VIBE_INTENSITY_INTERVAL_MS[s_intensity], vibe_timer_callback, NULL);
 }
 
 static void enter_firing_mode(void) {
   clear_persisted_alarm();
+  // Defensive: never leave a previous timer running and unreachable.
+  if (s_vibe_timer) {
+    app_timer_cancel(s_vibe_timer);
+    s_vibe_timer = NULL;
+  }
+  s_fired_at = time(NULL);
+  s_vibe_timed_out = false;
   s_mode = MODE_FIRING;
   apply_mode();
   play_vibe(s_intensity);
@@ -381,7 +437,13 @@ static void window_load(Window *window) {
   layer_add_child(root, text_layer_get_layer(s_hint_layer));
 
   if (persist_exists(PERSIST_KEY_INTENSITY)) {
-    s_intensity = (VibeIntensity)persist_read_int(PERSIST_KEY_INTENSITY);
+    // Validate before trusting it as an array index - an unexpected value
+    // would otherwise be an out-of-bounds read, and %s on a garbage pointer
+    // crashes the app. Out of range keeps the VIBE_MEDIUM default.
+    int32_t stored = persist_read_int(PERSIST_KEY_INTENSITY);
+    if (stored >= 0 && stored < NUM_VIBE_INTENSITIES) {
+      s_intensity = (VibeIntensity)stored;
+    }
   }
 
   if (persist_exists(PERSIST_KEY_WAKEUP_ID)) {

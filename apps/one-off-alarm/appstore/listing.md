@@ -92,6 +92,13 @@ Reliability - what makes sure it actually wakes you up:
 - The app menu countdown now stays current on its own, counting down
   as the alarm approaches rather than showing a fixed snapshot from
   the last time the app was opened.
+- The setup screen now spells out that the day is relative and the
+  time is absolute - "In 3 days" / "At 09:00" instead of a uniform
+  Days/Hour/Min list that read like one duration. Today and tomorrow
+  are named directly.
+- The alarm now stops vibrating after 5 minutes if nobody dismisses
+  it, instead of buzzing until the battery ran down. The screen then
+  shows "Alarm Rang" with the time it went off.
 ```
 
 ## Source URL
