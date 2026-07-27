@@ -5,6 +5,7 @@
 // and vibrates even if it was closed in the meantime. This is not a
 // recurring daily alarm - it fires once, then the alarm is cleared.
 
+#define APP_VERSION "1.2"
 #define ALARM_COOKIE 0
 #define PERSIST_KEY_WAKEUP_ID 100
 #define PERSIST_KEY_TARGET_TS 101
@@ -96,7 +97,7 @@ static void update_display(void) {
       int m = (secs_left % 3600) / 60;
       snprintf(s_title_buf, sizeof(s_title_buf), "Alarm Set");
       snprintf(s_value_buf, sizeof(s_value_buf), "%s\nin %dd %dh %dm", date_buf, d, h, m);
-      snprintf(s_hint_buf, sizeof(s_hint_buf), "Hold SELECT\nto cancel");
+      snprintf(s_hint_buf, sizeof(s_hint_buf), "Hold SELECT: cancel\nv%s", APP_VERSION);
       break;
     }
     case MODE_FIRING: {

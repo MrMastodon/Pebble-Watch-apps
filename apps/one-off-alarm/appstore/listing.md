@@ -11,7 +11,7 @@ One-Off Alarm
 ## Version
 
 ```
-1.1
+1.2
 ```
 
 ## Category
@@ -81,6 +81,13 @@ Reliability - what makes sure it actually wakes you up:
   fires.
 ```
 
+## Release notes (v1.2)
+
+```
+- The version number is now shown in small text at the bottom of the
+  "Alarm Set" screen, next to the cancel hint.
+```
+
 ## Source URL
 
 ```
@@ -107,10 +114,10 @@ cd apps/one-off-alarm
 pebble login
 pebble publish \
   --name "One-Off Alarm" \
-  --version 1.1 \
+  --version 1.2 \
   --description "Set a single wake-up alarm for any future date - not just a recurring daily one." \
   --category tools \
-  --release-notes "Cancelling now requires holding SELECT instead of a single short press, so it can't happen by accident." \
+  --release-notes "Version number now shown on the Alarm Set screen." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```
