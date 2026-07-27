@@ -87,9 +87,11 @@ Reliability - what makes sure it actually wakes you up:
 - The version number is now shown in small text at the bottom of the
   "Alarm Set" screen, next to the cancel hint.
 - Fixed the app menu countdown (added in the previous version) not
-  showing up at all - it relied on an advanced text-template syntax
-  that turned out to be invalid, silently rejecting the whole thing.
-  It's now a plain, self-computed countdown instead.
+  showing up at all - the text template it used was malformed, so the
+  whole thing was silently rejected and nothing was displayed.
+- The app menu countdown now stays current on its own, counting down
+  as the alarm approaches rather than showing a fixed snapshot from
+  the last time the app was opened.
 ```
 
 ## Source URL

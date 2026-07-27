@@ -118,13 +118,13 @@ static void update_display(void) {
 // run again, and we explicitly clear it (add no slice) whenever there's no
 // alarm, so nothing is ever shown outside of those two cases.
 #if !PBL_PLATFORM_APLITE
-static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit, void *context) {
-  if (limit < 1 || !persist_exists(PERSIST_KEY_TARGET_TS)) {
-    return;
-  }
-  time_t ts = (time_t)persist_read_int(PERSIST_KEY_TARGET_TS);
-  time_t now = time(NULL);
-  int secs_left = (int)(ts - now);
+// The template string's documented maximum length is 150 bytes.
+#define GLANCE_BUF_SIZE 150
+
+// Plain, non-updating countdown. Only used if the template below is
+// rejected - it goes stale as time passes, but that beats showing nothing.
+static void format_plain_countdown(char *buf, size_t buf_size, time_t ts) {
+  int secs_left = (int)(ts - time(NULL));
   if (secs_left < 0) {
     secs_left = 0;
   }
@@ -132,22 +132,49 @@ static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit
   int h = (secs_left % 86400) / 3600;
   int m = (secs_left % 3600) / 60;
 
-  char glance_buf[64];
   if (d > 0) {
-    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dd %dh", d, h);
+    snprintf(buf, buf_size, "Alarm in %dd %dh", d, h);
   } else if (h > 0) {
-    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dh %dm", h, m);
+    snprintf(buf, buf_size, "Alarm in %dh %dm", h, m);
   } else if (secs_left > 0) {
-    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dm", m);
+    snprintf(buf, buf_size, "Alarm in %dm", m);
   } else {
-    snprintf(glance_buf, sizeof(glance_buf), "Alarm ringing now");
+    snprintf(buf, buf_size, "Alarm ringing now");
   }
+}
+
+static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit, void *context) {
+  if (limit < 1 || !persist_exists(PERSIST_KEY_TARGET_TS)) {
+    return;
+  }
+  time_t ts = (time_t)persist_read_int(PERSIST_KEY_TARGET_TS);
+
+  // Preferred form: a template the system re-evaluates each time the launcher
+  // draws this row, so the countdown stays current without this app running.
+  // Syntax per the AppGlance C API guide - note that each quoted time-format
+  // holds exactly one %-specifier, and the parameters are comma-separated with
+  // no spaces. An earlier attempt broke both of those and was rejected
+  // silently, which is why nothing showed up at all.
+  char glance_buf[GLANCE_BUF_SIZE];
+  snprintf(glance_buf, sizeof(glance_buf),
+    "Alarm {time_until(%ld)|format(>=1d:'%%ad left',>0S:'%%aT left','now')}",
+    (long)ts);
 
   AppGlanceSlice slice = {
     .layout.icon = APP_GLANCE_SLICE_DEFAULT_ICON,
     .layout.subtitle_template_string = glance_buf,
     .expiration_time = ts,
   };
+
+  if (app_glance_add_slice(session, slice) == APP_GLANCE_RESULT_SUCCESS) {
+    return;
+  }
+
+  // Safety net: if the template is rejected for any reason, fall back to the
+  // plain string rather than leaving the glance empty.
+  APP_LOG(APP_LOG_LEVEL_WARNING, "Template glance rejected, falling back to plain text");
+  format_plain_countdown(glance_buf, sizeof(glance_buf), ts);
+  slice.layout.subtitle_template_string = glance_buf;
   AppGlanceResult result = app_glance_add_slice(session, slice);
   if (result != APP_GLANCE_RESULT_SUCCESS) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "app_glance_add_slice() returned %d", result);
