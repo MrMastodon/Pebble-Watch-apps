@@ -204,9 +204,14 @@ static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit
   // holds exactly one %-specifier, and the parameters are comma-separated with
   // no spaces. An earlier attempt broke both of those and was rejected
   // silently, which is why nothing showed up at all.
+  //
+  // Each rung names its unit explicitly (%ad/%aH/%aM) rather than using the
+  // auto format %aT, which drags seconds along - pointless churn on a glance
+  // you only see in passing. Minutes are as fine as this needs to get; under a
+  // minute the unpredicated fallback takes over.
   char glance_buf[GLANCE_BUF_SIZE];
   snprintf(glance_buf, sizeof(glance_buf),
-    "Alarm {time_until(%ld)|format(>=1d:'%%ad left',>0S:'%%aT left','now')}",
+    "Alarm {time_until(%ld)|format(>=1d:'%%ad left',>=1H:'%%aH left',>=1M:'%%aM left','now')}",
     (long)ts);
 
   AppGlanceSlice slice = {
