@@ -123,10 +123,26 @@ static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit
     return;
   }
   time_t ts = (time_t)persist_read_int(PERSIST_KEY_TARGET_TS);
-  char glance_buf[150];
-  snprintf(glance_buf, sizeof(glance_buf),
-    "Alarm {time_until(%ld)|format(>=1d:'%%ad %%aH left', >0S:'%%aH %%aM left', 'Ringing now')}",
-    (long)ts);
+  time_t now = time(NULL);
+  int secs_left = (int)(ts - now);
+  if (secs_left < 0) {
+    secs_left = 0;
+  }
+  int d = secs_left / 86400;
+  int h = (secs_left % 86400) / 3600;
+  int m = (secs_left % 3600) / 60;
+
+  char glance_buf[64];
+  if (d > 0) {
+    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dd %dh", d, h);
+  } else if (h > 0) {
+    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dh %dm", h, m);
+  } else if (secs_left > 0) {
+    snprintf(glance_buf, sizeof(glance_buf), "Alarm in %dm", m);
+  } else {
+    snprintf(glance_buf, sizeof(glance_buf), "Alarm ringing now");
+  }
+
   AppGlanceSlice slice = {
     .layout.icon = APP_GLANCE_SLICE_DEFAULT_ICON,
     .layout.subtitle_template_string = glance_buf,
@@ -388,6 +404,9 @@ static void deinit(void) {
     s_vibe_timer = NULL;
   }
   window_destroy(s_window);
+
+  // Per Pebble's own App Glance example: do this last, right before exiting.
+  update_app_glance();
 }
 
 int main(void) {
