@@ -59,6 +59,11 @@ on its own the moment the alarm fires.
   not a countdown that survives a watch factory reset.
 - Per the Wakeup API, an alarm can't be scheduled within 30 seconds of the
   current time — the app will tell you if you pick a time too close to "now".
+- The OS reserves a one-minute window around every scheduled wakeup, across
+  all apps. If another app already holds that minute, the alarm can't be set
+  there and the app says so ("Time slot taken") — pick the next slot instead.
+  Leftovers from this app's own earlier alarms are cleared automatically
+  before scheduling, so they can't block you.
 
 ## Build & install
 

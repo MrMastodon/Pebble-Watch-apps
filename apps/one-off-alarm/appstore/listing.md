@@ -99,6 +99,12 @@ Reliability - what makes sure it actually wakes you up:
 - The alarm now stops vibrating after 5 minutes if nobody dismisses
   it, instead of buzzing until the battery ran down. The screen then
   shows "Alarm Rang" with the time it went off.
+- Fixed alarms refusing to be set with an error code. A leftover
+  reservation from an earlier alarm could keep occupying its time
+  slot invisibly, blocking any new alarm at that time; the app now
+  clears its own leftovers before scheduling.
+- Errors now explain themselves in words instead of showing a raw
+  code.
 ```
 
 ## Source URL

@@ -114,6 +114,14 @@ static void update_display(void) {
       break;
     }
     case MODE_ALARM_SET: {
+      if (!persist_exists(PERSIST_KEY_TARGET_TS)) {
+        // Shouldn't happen - window_load refreshes this from the OS - but
+        // reading a missing key yields 0, which would render as Jan 1970.
+        snprintf(s_title_buf, sizeof(s_title_buf), "Alarm Set");
+        snprintf(s_value_buf, sizeof(s_value_buf), "Alarm is\nscheduled");
+        snprintf(s_hint_buf, sizeof(s_hint_buf), "Hold SELECT: cancel\nv%s", APP_VERSION);
+        break;
+      }
       time_t ts = (time_t)persist_read_int(PERSIST_KEY_TARGET_TS);
       char date_buf[32];
       strftime(date_buf, sizeof(date_buf), "%a %d %b\n%H:%M", localtime(&ts));
@@ -260,16 +268,42 @@ static void schedule_alarm(void) {
     return;
   }
 
+  // The OS refuses a wakeup within a minute of one that already exists, and
+  // this app can lose track of its own: it only knows about an alarm through
+  // PERSIST_KEY_WAKEUP_ID, so if storage and the OS registry ever fall out of
+  // step, an orphaned wakeup keeps occupying the slot while the app shows the
+  // setup screen. Clearing first makes that self-healing. Safe because we only
+  // get here from MODE_SETUP - i.e. when no alarm is supposed to exist - and
+  // because this only cancels wakeups belonging to this app.
+  wakeup_cancel_all();
+
   WakeupId id = wakeup_schedule(target, ALARM_COOKIE, true);
   if (id < 0) {
-    snprintf(s_value_buf, sizeof(s_value_buf), "Could not set\nalarm (err %d)", (int)id);
+    switch (id) {
+      case E_RANGE:
+        // Another app holds a wakeup within a minute of this time; we can't
+        // clear that one, so the user has to pick a different slot.
+        snprintf(s_value_buf, sizeof(s_value_buf), "Time slot taken.\nTry another time.");
+        break;
+      case E_INVALID_ARGUMENT:
+        snprintf(s_value_buf, sizeof(s_value_buf), "Time is in\nthe past");
+        break;
+      case E_OUT_OF_RESOURCES:
+        snprintf(s_value_buf, sizeof(s_value_buf), "Too many alarms\nscheduled");
+        break;
+      default:
+        snprintf(s_value_buf, sizeof(s_value_buf), "Could not set\nalarm (err %d)", (int)id);
+        break;
+    }
     text_layer_set_text(s_value_layer, s_value_buf);
     return;
   }
 
-  persist_write_int(PERSIST_KEY_WAKEUP_ID, (int)id);
-  persist_write_int(PERSIST_KEY_TARGET_TS, (int)target);
-  persist_write_int(PERSIST_KEY_INTENSITY, (int)s_intensity);
+  // time_t is 32-bit here (the SDK builds with -Dtime_t=long), so this stores
+  // the full value. The 2038 ceiling is the platform's, not ours.
+  persist_write_int(PERSIST_KEY_WAKEUP_ID, (int32_t)id);
+  persist_write_int(PERSIST_KEY_TARGET_TS, (int32_t)target);
+  persist_write_int(PERSIST_KEY_INTENSITY, (int32_t)s_intensity);
   s_mode = MODE_ALARM_SET;
   apply_mode();
 }
@@ -450,6 +484,10 @@ static void window_load(Window *window) {
     WakeupId id = (WakeupId)persist_read_int(PERSIST_KEY_WAKEUP_ID);
     time_t ts;
     if (wakeup_query(id, &ts)) {
+      // The OS knows the real scheduled time, so treat it as authoritative and
+      // refresh our stored copy from it rather than trusting a value that may
+      // have drifted or gone missing.
+      persist_write_int(PERSIST_KEY_TARGET_TS, (int32_t)ts);
       s_mode = MODE_ALARM_SET;
     } else {
       clear_persisted_alarm();
