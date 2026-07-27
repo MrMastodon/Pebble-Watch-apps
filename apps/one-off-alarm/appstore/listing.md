@@ -11,7 +11,7 @@ One-Off Alarm
 ## Version
 
 ```
-1.0
+1.1
 ```
 
 ## Category
@@ -68,6 +68,15 @@ Reliability - what makes sure it actually wakes you up:
   to "now" instead of silently failing.
 ```
 
+## Release notes (v1.1)
+
+```
+- Cancelling a set alarm now requires holding SELECT (same as
+  confirming a new one), instead of a single short press. A short
+  press previously cancelled it outright, which was too easy to
+  trigger by accident.
+```
+
 ## Source URL
 
 ```
@@ -94,10 +103,10 @@ cd apps/one-off-alarm
 pebble login
 pebble publish \
   --name "One-Off Alarm" \
-  --version 1.0 \
+  --version 1.1 \
   --description "Set a single wake-up alarm for any future date - not just a recurring daily one." \
   --category tools \
-  --release-notes "Initial release: one-off wake-up alarms with Mild/Medium/Aggressive vibration." \
+  --release-notes "Cancelling now requires holding SELECT instead of a single short press, so it can't happen by accident." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```
