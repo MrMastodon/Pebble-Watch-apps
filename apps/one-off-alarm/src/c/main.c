@@ -111,6 +111,39 @@ static void update_display(void) {
   text_layer_set_text(s_hint_layer, s_hint_buf);
 }
 
+// Shows a live countdown under the app's name in the launcher menu - but
+// only while an alarm is actually set. It expires automatically at the
+// alarm's own fire time, so it clears itself without the app needing to
+// run again, and we explicitly clear it (add no slice) whenever there's no
+// alarm, so nothing is ever shown outside of those two cases.
+#if !PBL_PLATFORM_APLITE
+static void glance_reload_callback(AppGlanceReloadSession *session, size_t limit, void *context) {
+  if (limit < 1 || !persist_exists(PERSIST_KEY_TARGET_TS)) {
+    return;
+  }
+  time_t ts = (time_t)persist_read_int(PERSIST_KEY_TARGET_TS);
+  char glance_buf[150];
+  snprintf(glance_buf, sizeof(glance_buf),
+    "Alarm {time_until(%ld)|format(>=1d:'%%ad %%aH left', >0S:'%%aH %%aM left', 'Ringing now')}",
+    (long)ts);
+  AppGlanceSlice slice = {
+    .layout.icon = APP_GLANCE_SLICE_DEFAULT_ICON,
+    .layout.subtitle_template_string = glance_buf,
+    .expiration_time = ts,
+  };
+  AppGlanceResult result = app_glance_add_slice(session, slice);
+  if (result != APP_GLANCE_RESULT_SUCCESS) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "app_glance_add_slice() returned %d", result);
+  }
+}
+#endif
+
+static void update_app_glance(void) {
+#if !PBL_PLATFORM_APLITE
+  app_glance_reload(glance_reload_callback, NULL);
+#endif
+}
+
 static void apply_mode(void) {
   switch (s_mode) {
     case MODE_SETUP:
@@ -124,6 +157,7 @@ static void apply_mode(void) {
       break;
   }
   update_display();
+  update_app_glance();
 }
 
 static void clear_persisted_alarm(void) {

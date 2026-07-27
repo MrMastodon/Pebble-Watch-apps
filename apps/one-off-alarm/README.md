@@ -26,6 +26,11 @@ Once set, the app shows a countdown; **hold SELECT** to cancel it (a short
 press is intentionally ignored, so you don't cancel it by accident). When
 the alarm fires, any button dismisses it.
 
+While an alarm is set, the watch's app menu also shows a live countdown
+under the app's name (e.g. "1d 4h left") using the [App Glance](https://developer.repebble.com/guides/user-interfaces/appglance-c/)
+API - it only appears while an alarm is actually scheduled, and disappears
+on its own the moment the alarm fires.
+
 ## Limitations
 
 - Only one alarm can be active at a time in this app (by design, to keep it simple).

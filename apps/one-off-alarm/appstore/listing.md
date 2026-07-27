@@ -75,6 +75,10 @@ Reliability - what makes sure it actually wakes you up:
   confirming a new one), instead of a single short press. A short
   press previously cancelled it outright, which was too easy to
   trigger by accident.
+- The app menu now shows a live countdown under the app's name while
+  an alarm is set (e.g. "1d 4h left") - only while one is actually
+  scheduled, and it clears itself automatically the moment the alarm
+  fires.
 ```
 
 ## Source URL
