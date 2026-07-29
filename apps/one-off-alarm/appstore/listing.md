@@ -11,7 +11,7 @@ One-Off Alarm
 ## Version
 
 ```
-1.2
+1.3
 ```
 
 ## Category
@@ -23,15 +23,16 @@ tools
 ## Short description
 
 ```
-Set wake-up alarms for any future date - not just recurring daily ones.
+Set one-off alarms for any future date - not just recurring daily ones.
 ```
 
 ## Full description
 
 ```
-One-Off Alarm lets you schedule wake-up alarms for any point in the future -
-"in 3 weeks at 9 AM", "tomorrow at 6:30" - instead of the recurring daily
-alarms of the built-in Alarms app. Keep several pending at once, up to eight.
+One-Off Alarm lets you schedule alarms for any point in the future - "in 3
+weeks at 9 AM", "tomorrow at 6:30" - instead of the recurring daily alarms of
+the built-in Alarms app. Use it to wake up, or as a reminder for anything at
+all. Keep several pending at once, up to eight.
 
 Opening the app lists your alarms with the soonest first. To add one, pick how
 many days from now, then the hour and minute, cycling between fields with
@@ -39,7 +40,7 @@ SELECT and holding SELECT to add it. Choose how each alarm vibrates - Mild,
 Medium, or Aggressive - and feel the pattern instantly as you pick it. Holding
 SELECT on an alarm in the list deletes it.
 
-The watch will wake you at the exact moment you chose, even if you've closed
+The watch will alert you at the exact moment you chose, even if you've closed
 the app in the meantime - no phone required at the time it fires. The app menu
 shows a live countdown to whichever alarm is next.
 ```
@@ -82,11 +83,18 @@ Reliability - what makes sure it actually wakes you up:
   fires.
 ```
 
-## Release notes (v1.2)
+## Release notes (v1.3)
+
+Covers everything that had been staged as 1.2, which was never published.
 
 ```
-- The version number is now shown in small text at the bottom of the
-  "Alarm Set" screen, next to the cancel hint.
+- You can now have several alarms pending at once, up to eight. The
+  app opens on a list of them, soonest first; hold SELECT on one to
+  delete it. The app menu countdown tracks whichever alarm is next.
+- The screen shown when an alarm fires no longer assumes you're being
+  woken up - it shows the time instead of telling you to get up, since
+  an alarm may just as well be an afternoon reminder.
+- The version number is now shown in the alarm list header.
 - Fixed the app menu countdown (added in the previous version) not
   showing up at all - the text template it used was malformed, so the
   whole thing was silently rejected and nothing was displayed.
@@ -106,9 +114,6 @@ Reliability - what makes sure it actually wakes you up:
   clears its own leftovers before scheduling.
 - Errors now explain themselves in words instead of showing a raw
   code.
-- You can now have several alarms pending at once, up to eight. The
-  app opens on a list of them, soonest first; hold SELECT on one to
-  delete it. The app menu countdown tracks whichever alarm is next.
 ```
 
 ## Source URL
@@ -137,10 +142,10 @@ cd apps/one-off-alarm
 pebble login
 pebble publish \
   --name "One-Off Alarm" \
-  --version 1.2 \
-  --description "Set a single wake-up alarm for any future date - not just a recurring daily one." \
+  --version 1.3 \
+  --description "Set one-off alarms for any future date - not just recurring daily ones." \
   --category tools \
-  --release-notes "Version number now shown on the Alarm Set screen." \
+  --release-notes "Several alarms can now be pending at once, up to eight." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```

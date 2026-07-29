@@ -6,7 +6,7 @@
 // alarms - each fires once and is then removed. Several can be pending at the
 // same time, up to the platform's ceiling of 8.
 
-#define APP_VERSION "1.2"
+#define APP_VERSION "1.3"
 
 // The SDK allows at most 8 wakeup events per app, so that is also the ceiling
 // on pending alarms.
@@ -343,18 +343,23 @@ static void update_firing_display(void) {
   if (!s_firing_title_layer) {
     return;
   }
+  // Both states show the time rather than saying anything about why the alarm
+  // was set. These are one-off alarms for any occasion - a reminder on a
+  // weekday afternoon as easily as a morning wake-up - so telling the user to
+  // get up would often be simply wrong.
+  char time_buf[16];
+  strftime(time_buf, sizeof(time_buf), "%H:%M", localtime(&s_fired_at));
+
   if (s_vibe_timed_out) {
     // Vibration gave up on its own. Say so, and say when it rang - leaving
     // "Press any button to stop" up while nothing is buzzing would just be
-    // confusing, and the time is useful if you slept through it.
-    char rang_buf[16];
-    strftime(rang_buf, sizeof(rang_buf), "%H:%M", localtime(&s_fired_at));
+    // confusing, and the time is useful if you missed it.
     snprintf(s_firing_title_buf, sizeof(s_firing_title_buf), "Alarm Rang");
-    snprintf(s_firing_value_buf, sizeof(s_firing_value_buf), "at %s", rang_buf);
+    snprintf(s_firing_value_buf, sizeof(s_firing_value_buf), "at %s", time_buf);
     snprintf(s_firing_hint_buf, sizeof(s_firing_hint_buf), "Press any button");
   } else {
-    snprintf(s_firing_title_buf, sizeof(s_firing_title_buf), "WAKE UP!");
-    snprintf(s_firing_value_buf, sizeof(s_firing_value_buf), "Time to get up!");
+    snprintf(s_firing_title_buf, sizeof(s_firing_title_buf), "ALARM");
+    snprintf(s_firing_value_buf, sizeof(s_firing_value_buf), "%s", time_buf);
     snprintf(s_firing_hint_buf, sizeof(s_firing_hint_buf), "Press any button\nto stop");
   }
   text_layer_set_text(s_firing_title_layer, s_firing_title_buf);
