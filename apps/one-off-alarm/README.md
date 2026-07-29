@@ -1,17 +1,41 @@
 # One-Off Alarm
 
-A watchapp for setting a single wake-up alarm on a specific future date and
-time — for example "wake me up in 1 day at 09:00" — rather than a
-recurring daily alarm like the built-in Alarms app.
+A watchapp for setting wake-up alarms on specific future dates and times —
+for example "wake me up in 3 days at 09:00" — rather than the recurring daily
+alarms of the built-in Alarms app. Several can be pending at once.
 
 It uses the Pebble [Wakeup API](https://developer.repebble.com/guides/events-and-services/wakeups/)
 to schedule the watch to relaunch this app at the chosen moment and vibrate,
 even if the app has been closed in the meantime. It also subscribes to
-wakeup events while running (`wakeup_service_subscribe`), so the alarm still
-fires correctly even if you happen to have the app open on the countdown
-screen at the exact moment it's due — not just when it's launched fresh.
+wakeup events while running (`wakeup_service_subscribe`), so an alarm still
+fires correctly even if you happen to have the app open at the exact moment
+it's due — not just when it's launched fresh.
 
 ## Using it
+
+Opening the app shows the pending alarms, soonest first:
+
+```
+   Alarms - hold to delete
+  ──────────────────────
+   Wed 15 Aug 09:00
+   in 1d 4h - Medium
+  ──────────────────────
+   Fri 17 Aug 06:30
+   in 3d 1h - Aggressive
+  ──────────────────────
+   + New alarm
+  ──────────────────────
+```
+
+- **UP / DOWN** — move through the list.
+- **SELECT** on `+ New alarm` — open the setup screen described below.
+- **SELECT (hold)** on an alarm — delete it. A short press deliberately does
+  nothing, so a stray tap can't discard an alarm.
+
+To change an existing alarm, delete it and add a new one.
+
+### Adding an alarm
 
 The setup screen looks like this, with `>` marking the row you're editing:
 
@@ -27,7 +51,7 @@ The setup screen looks like this, with `>` marking the row you're editing:
 
 - **UP / DOWN** — change the value of the highlighted row.
 - **SELECT (short press)** — move to the next field (day → hour → minute → Vibe).
-- **SELECT (hold)** — confirm and schedule the alarm.
+- **SELECT (hold)** — add the alarm and return to the list.
 
 Note that the day is **relative** ("Today", "Tomorrow", "In 3 days") while the
 time is an **absolute** clock time ("At 09:00") — so "In 3 days / At 09:00"
@@ -41,29 +65,32 @@ Medium, or Aggressive (each with its own pattern and repeat interval).
 Changing it with UP/DOWN immediately plays that pattern once, so you can
 feel the difference before committing to it.
 
-Once set, the app shows a countdown; **hold SELECT** to cancel it (a short
-press is intentionally ignored, so you don't cancel it by accident). When
-the alarm fires, any button dismisses it. If nobody does, it stops vibrating
-after 5 minutes rather than draining the battery, and the screen switches to
-"Alarm Rang / at 09:00" so you can see that it went off and when.
+When an alarm fires, any button dismisses it. If nobody does, it stops
+vibrating after 5 minutes rather than draining the battery, and the screen
+switches to "Alarm Rang / at 09:00" so you can see that it went off and when.
+A fired alarm removes itself from the list; the others stay.
 
-While an alarm is set, the watch's app menu also shows a live countdown
+While any alarm is pending, the watch's app menu also shows a live countdown
 under the app's name (e.g. "1d 4h left") using the [App Glance](https://developer.repebble.com/guides/user-interfaces/appglance-c/)
-API - it only appears while an alarm is actually scheduled, and disappears
-on its own the moment the alarm fires.
+API. It always tracks the **next** alarm to ring, only appears while something
+is actually scheduled, and disappears on its own the moment that alarm fires.
 
 ## Limitations
 
-- Only one alarm can be active at a time in this app (by design, to keep it simple).
+- Up to 8 alarms can be pending at once — the platform's ceiling on scheduled
+  wakeup events per app. Beyond that the app says so rather than failing oddly.
+- Alarms can't be edited, only deleted and re-added.
 - The watch must stay charged and paired; a wakeup is a scheduled OS event,
   not a countdown that survives a watch factory reset.
 - Per the Wakeup API, an alarm can't be scheduled within 30 seconds of the
   current time — the app will tell you if you pick a time too close to "now".
 - The OS reserves a one-minute window around every scheduled wakeup, across
-  all apps. If another app already holds that minute, the alarm can't be set
-  there and the app says so ("Time slot taken") — pick the next slot instead.
-  Leftovers from this app's own earlier alarms are cleared automatically
-  before scheduling, so they can't block you.
+  all apps. Two alarms therefore can't sit within a minute of each other, and
+  another app can occupy a minute too. Either way the app says "Time slot
+  taken" — pick the next slot instead.
+- When the list is empty, any leftover reservations from this app are cleared
+  before scheduling, so an orphaned one can't block you. That cleanup is
+  deliberately skipped once alarms exist, since it would remove them too.
 
 ## Build & install
 

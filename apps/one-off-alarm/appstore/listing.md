@@ -23,24 +23,25 @@ tools
 ## Short description
 
 ```
-Set a single wake-up alarm for any future date - not just a recurring daily one.
+Set wake-up alarms for any future date - not just recurring daily ones.
 ```
 
 ## Full description
 
 ```
-One-Off Alarm lets you schedule a single wake-up alarm for any point in the
-future - "in 3 weeks at 9 AM", "tomorrow at 6:30" - instead of a recurring
-daily alarm like the built-in Alarms app.
+One-Off Alarm lets you schedule wake-up alarms for any point in the future -
+"in 3 weeks at 9 AM", "tomorrow at 6:30" - instead of the recurring daily
+alarms of the built-in Alarms app. Keep several pending at once, up to eight.
 
-Pick how many days from now, the hour, and the minute using UP/DOWN, cycle
-between fields with SELECT, and hold SELECT to confirm. Choose how the alarm
-vibrates - Mild, Medium, or Aggressive - and feel each pattern instantly as
-you pick it.
+Opening the app lists your alarms with the soonest first. To add one, pick how
+many days from now, then the hour and minute, cycling between fields with
+SELECT and holding SELECT to add it. Choose how each alarm vibrates - Mild,
+Medium, or Aggressive - and feel the pattern instantly as you pick it. Holding
+SELECT on an alarm in the list deletes it.
 
-Once set, the watch will wake you up at the exact moment you chose, even if
-you've closed the app in the meantime - no phone required at the time it
-fires.
+The watch will wake you at the exact moment you chose, even if you've closed
+the app in the meantime - no phone required at the time it fires. The app menu
+shows a live countdown to whichever alarm is next.
 ```
 
 ## Release notes (v1.0)
@@ -105,6 +106,9 @@ Reliability - what makes sure it actually wakes you up:
   clears its own leftovers before scheduling.
 - Errors now explain themselves in words instead of showing a raw
   code.
+- You can now have several alarms pending at once, up to eight. The
+  app opens on a list of them, soonest first; hold SELECT on one to
+  delete it. The app menu countdown tracks whichever alarm is next.
 ```
 
 ## Source URL
