@@ -507,9 +507,10 @@ static void firing_window_unload(Window *window) {
 static void update_setup_display(void) {
   time_t target = compute_target_timestamp();
   char date_buf[32];
-  // Date only: the time is already spelled out on the "At" row directly above,
-  // so this line's job is just to resolve what "In 3 days" actually lands on.
-  // Keeping the time here too would push the line past the screen width once
+  // Date only, and placed directly beneath the day row it belongs to: this
+  // line exists to answer "which date is 'In 3 days', exactly?", so sitting
+  // next to that row is what makes the connection obvious. The time is spelled
+  // out on the "At" row and would push this past the screen width anyway once
   // it carries an AM/PM suffix.
   strftime(date_buf, sizeof(date_buf), "%a %d %b", localtime(&target));
 
@@ -534,11 +535,11 @@ static void update_setup_display(void) {
 
   snprintf(s_setup_title_buf, sizeof(s_setup_title_buf), "New Alarm");
   snprintf(s_setup_value_buf, sizeof(s_setup_value_buf),
-    "%c %s\n%c At  %s\n%c Vibe %s\n%s",
+    "%c %s\n%s\n%c At  %s\n%c Vibe %s",
     s_field == FIELD_DAYS ? '>' : ' ', day_buf,
+    date_buf,
     (s_field == FIELD_HOUR || s_field == FIELD_MINUTE) ? '>' : ' ', time_buf,
-    s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity],
-    date_buf);
+    s_field == FIELD_INTENSITY ? '>' : ' ', VIBE_INTENSITY_NAMES[s_intensity]);
   snprintf(s_setup_hint_buf, sizeof(s_setup_hint_buf),
     "UP/DN: value  SELECT: next\nHold SELECT: add alarm");
 

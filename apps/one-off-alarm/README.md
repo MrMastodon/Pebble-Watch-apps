@@ -49,10 +49,9 @@ The setup screen looks like this, with `>` marking the row you're editing:
       New Alarm
 
   > In 3 days
+    Wed 15 Aug
     At      09:00
     Vibe    Medium
-
-   Wed 15 Aug
 ```
 
 - **UP / DOWN** — change the value of the highlighted row.
@@ -62,9 +61,10 @@ The setup screen looks like this, with `>` marking the row you're editing:
 Note that the day is **relative** ("Today", "Tomorrow", "In 3 days") while the
 time is an **absolute** clock time ("At 09:00") — so "In 3 days / At 09:00"
 means 9 in the morning, three days from now, not "3 days and 9 hours from
-now". The bottom line resolves the relative day to an actual date so you can
-check it before confirming. Hour and minute share the `At` row; brackets show
-which of the two you're editing.
+now". The date sits directly under the day row, since that's what it resolves —
+so you can check which day "In 3 days" actually lands on before confirming.
+Hour and minute share the `At` row; brackets show which of the two you're
+editing.
 
 The last field, **Vibe**, picks how the alarm vibrates when it fires — Mild,
 Medium, or Aggressive (each with its own pattern and repeat interval).
