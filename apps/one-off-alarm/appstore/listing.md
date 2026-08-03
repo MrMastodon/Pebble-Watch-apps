@@ -11,7 +11,7 @@ One-Off Alarm
 ## Version
 
 ```
-1.3
+1.4
 ```
 
 ## Category
@@ -116,6 +116,14 @@ Covers everything that had been staged as 1.2, which was never published.
   code.
 ```
 
+## Release notes (v1.4)
+
+```
+- Times now follow the watch's own 12/24-hour setting instead of
+  always showing 24-hour. An alarm at 21:30 reads "9:30 PM" if that's
+  how your watch is set up.
+```
+
 ## Source URL
 
 ```
@@ -142,10 +150,10 @@ cd apps/one-off-alarm
 pebble login
 pebble publish \
   --name "One-Off Alarm" \
-  --version 1.3 \
+  --version 1.4 \
   --description "Set one-off alarms for any future date - not just recurring daily ones." \
   --category tools \
-  --release-notes "Several alarms can now be pending at once, up to eight." \
+  --release-notes "Times now follow the watch's 12/24-hour setting." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```

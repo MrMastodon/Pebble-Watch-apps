@@ -6,7 +6,7 @@
 // alarms - each fires once and is then removed. Several can be pending at the
 // same time, up to the platform's ceiling of 8.
 
-#define APP_VERSION "1.3"
+#define APP_VERSION "1.4"
 
 // The SDK allows at most 8 wakeup events per app, so that is also the ceiling
 // on pending alarms.
@@ -109,6 +109,55 @@ static time_t compute_target_timestamp(void) {
   target_tm.tm_min = s_minute;
   target_tm.tm_sec = 0;
   return mktime(&target_tm);
+}
+
+// Formats a clock time the way the watch itself is configured to show it.
+// There's no SDK helper for this - clock_copy_time_string() only handles the
+// current time - so the 12-hour case is built by hand. strftime's %I is no use
+// because it pads to "09:00 AM", and %l isn't something to rely on.
+static void format_clock_time(char *buf, size_t buf_size, time_t at) {
+  struct tm *t = localtime(&at);
+  if (clock_is_24h_style()) {
+    strftime(buf, buf_size, "%H:%M", t);
+    return;
+  }
+  // Both midnight and noon map to 12 - the classic off-by-twelve here.
+  int hour12 = t->tm_hour % 12;
+  if (hour12 == 0) {
+    hour12 = 12;
+  }
+  snprintf(buf, buf_size, "%d:%02d %s", hour12, t->tm_min,
+           t->tm_hour < 12 ? "AM" : "PM");
+}
+
+// Same, but for the hour/minute the setup screen is still editing, where the
+// two halves are separate fields rather than one timestamp.
+static void format_picker_time(char *buf, size_t buf_size, int hour, int minute,
+                               bool bracket_hour, bool bracket_minute) {
+  char hour_buf[8];
+  char minute_buf[8];
+
+  if (clock_is_24h_style()) {
+    snprintf(hour_buf, sizeof(hour_buf), "%02d", hour);
+  } else {
+    int hour12 = hour % 12;
+    if (hour12 == 0) {
+      hour12 = 12;
+    }
+    snprintf(hour_buf, sizeof(hour_buf), "%d", hour12);
+  }
+  snprintf(minute_buf, sizeof(minute_buf), "%02d", minute);
+
+  // Brackets mark which half is being edited; the AM/PM suffix sits outside
+  // them, since it isn't a field you can select.
+  const char *suffix = clock_is_24h_style() ? "" : (hour < 12 ? " AM" : " PM");
+  if (bracket_hour) {
+    snprintf(buf, buf_size, "[%s]:%s%s", hour_buf, minute_buf, suffix);
+  } else if (bracket_minute) {
+    snprintf(buf, buf_size, "%s:[%s]%s", hour_buf, minute_buf, suffix);
+  } else {
+    snprintf(buf, buf_size, "%s:%s%s", hour_buf, minute_buf, suffix);
+  }
 }
 
 // Splits a remaining duration into the coarsest sensible "in ..." phrasing.
@@ -348,7 +397,7 @@ static void update_firing_display(void) {
   // weekday afternoon as easily as a morning wake-up - so telling the user to
   // get up would often be simply wrong.
   char time_buf[16];
-  strftime(time_buf, sizeof(time_buf), "%H:%M", localtime(&s_fired_at));
+  format_clock_time(time_buf, sizeof(time_buf), s_fired_at);
 
   if (s_vibe_timed_out) {
     // Vibration gave up on its own. Say so, and say when it rang - leaving
@@ -458,7 +507,11 @@ static void firing_window_unload(Window *window) {
 static void update_setup_display(void) {
   time_t target = compute_target_timestamp();
   char date_buf[32];
-  strftime(date_buf, sizeof(date_buf), "%a %d %b %H:%M", localtime(&target));
+  // Date only: the time is already spelled out on the "At" row directly above,
+  // so this line's job is just to resolve what "In 3 days" actually lands on.
+  // Keeping the time here too would push the line past the screen width once
+  // it carries an AM/PM suffix.
+  strftime(date_buf, sizeof(date_buf), "%a %d %b", localtime(&target));
 
   // The day count is relative ("3 days from now") while the time is an
   // absolute wall clock ("at 09:00"). Spelling both out in plain words is
@@ -476,13 +529,8 @@ static void update_setup_display(void) {
   // Hour and minute share one row, so the row-leading '>' can't say which
   // of the two is being edited - brackets around the active half do.
   char time_buf[16];
-  if (s_field == FIELD_HOUR) {
-    snprintf(time_buf, sizeof(time_buf), "[%02d]:%02d", s_hour, s_minute);
-  } else if (s_field == FIELD_MINUTE) {
-    snprintf(time_buf, sizeof(time_buf), "%02d:[%02d]", s_hour, s_minute);
-  } else {
-    snprintf(time_buf, sizeof(time_buf), "%02d:%02d", s_hour, s_minute);
-  }
+  format_picker_time(time_buf, sizeof(time_buf), s_hour, s_minute,
+                     s_field == FIELD_HOUR, s_field == FIELD_MINUTE);
 
   snprintf(s_setup_title_buf, sizeof(s_setup_title_buf), "New Alarm");
   snprintf(s_setup_value_buf, sizeof(s_setup_value_buf),
@@ -672,8 +720,36 @@ static void menu_draw_row(GContext *ctx, const Layer *cell_layer, MenuIndex *cel
   }
 
   const Alarm *alarm = &s_alarms[cell_index->row];
-  char title[32];
-  strftime(title, sizeof(title), "%a %d %b %H:%M", localtime(&alarm->at));
+
+  char clock_buf[16];
+  format_clock_time(clock_buf, sizeof(clock_buf), alarm->at);
+
+  // Prefer the weekday - it's genuinely useful for an alarm days out - and only
+  // drop it if the row can't hold it. In 12-hour mode the AM/PM suffix pushes
+  // the full form right up against the screen width, so rather than guessing
+  // whether it fits, measure it.
+  char date_buf[16];
+  strftime(date_buf, sizeof(date_buf), "%a %d %b", localtime(&alarm->at));
+
+  char title[40];
+  snprintf(title, sizeof(title), "%s %s", date_buf, clock_buf);
+
+  GRect cell_bounds = layer_get_bounds(cell_layer);
+  // Measure in a deliberately oversized box: constrained to the cell's own
+  // width, TrailingEllipsis would truncate and the result could never exceed
+  // it, which tells us nothing.
+  GSize natural = graphics_text_layout_get_content_size(
+      title, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+      GRect(0, 0, 1000, cell_bounds.size.h),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft);
+
+  // Covers the padding menu_cell_basic_draw applies itself, which isn't
+  // documented - a conservative guess, tuned against the real display.
+  const int16_t cell_text_inset = 10;
+  if (natural.w > cell_bounds.size.w - cell_text_inset) {
+    strftime(date_buf, sizeof(date_buf), "%d %b", localtime(&alarm->at));
+    snprintf(title, sizeof(title), "%s %s", date_buf, clock_buf);
+  }
 
   char remaining[24];
   format_remaining(remaining, sizeof(remaining), alarm->at);

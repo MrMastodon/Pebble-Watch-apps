@@ -35,6 +35,12 @@ Opening the app shows the pending alarms, soonest first:
 
 To change an existing alarm, delete it and add a new one.
 
+Times follow the watch's own 12/24-hour setting everywhere they appear, so the
+same alarm reads `09:00` or `9:00 AM` depending on how the watch is
+configured. In 12-hour mode the AM/PM suffix makes a list row wider; the app
+measures each row and drops the weekday (`15 Aug 9:00 AM`) only if the full
+form wouldn't fit.
+
 ### Adding an alarm
 
 The setup screen looks like this, with `>` marking the row you're editing:
@@ -46,7 +52,7 @@ The setup screen looks like this, with `>` marking the row you're editing:
     At      09:00
     Vibe    Medium
 
-   Wed 15 Aug 09:00
+   Wed 15 Aug
 ```
 
 - **UP / DOWN** — change the value of the highlighted row.
@@ -56,9 +62,9 @@ The setup screen looks like this, with `>` marking the row you're editing:
 Note that the day is **relative** ("Today", "Tomorrow", "In 3 days") while the
 time is an **absolute** clock time ("At 09:00") — so "In 3 days / At 09:00"
 means 9 in the morning, three days from now, not "3 days and 9 hours from
-now". The bottom line always resolves it to a full date so you can check
-before confirming. Hour and minute share the `At` row; brackets show which of
-the two you're editing.
+now". The bottom line resolves the relative day to an actual date so you can
+check it before confirming. Hour and minute share the `At` row; brackets show
+which of the two you're editing.
 
 The last field, **Vibe**, picks how the alarm vibrates when it fires — Mild,
 Medium, or Aggressive (each with its own pattern and repeat interval).

@@ -1,6 +1,6 @@
 {
   "name": "one-off-alarm",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Set one-off alarms for specific future dates and times (not recurring daily alarms).",
   "author": "Pebble-Watch-apps contributors",
   "private": true,
