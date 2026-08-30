@@ -1,0 +1,36 @@
+{
+  "name": "boarding-pass",
+  "version": "1.0.0",
+  "description": "Shows a boarding pass barcode, pushed from an Android companion app, as a scannable Aztec code.",
+  "author": "Pebble-Watch-apps contributors",
+  "private": true,
+  "keywords": ["pebble-app"],
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Boarding Pass",
+    "uuid": "68df00cb-8d06-45c9-904a-389479abce52",
+    "sdkVersion": "3",
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "companionApp": {
+      "android": {
+        "url": "https://github.com/MrMastodon/Pebble-Watch-apps/tree/main/apps/boarding-pass/android",
+        "apps": [
+          {
+            "package": "com.pebblewatchapps.boardingpass"
+          },
+          {
+            "package": "com.pebblewatchapps.boardingpass.debug"
+          }
+        ]
+      }
+    },
+    "resources": {
+      "media": []
+    }
+  }
+}

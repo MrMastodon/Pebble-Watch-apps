@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Aztec bullseye: three nested squares, which is what the watch shows in
+     the middle of the code. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="108dp"
+        android:height="108dp"
+        android:viewportWidth="108"
+        android:viewportHeight="108">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M30,30 H78 V78 H30 Z M36,36 V72 H72 V36 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M42,42 H66 V66 H42 Z M48,48 V60 H60 V48 Z"/>
+    <path
+        android:fillColor="#000000"
+        android:pathData="M51,51 H57 V57 H51 Z"/>
+</vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The stored boarding pass is encrypted under a key that never leaves this
+     device's keystore, so a backup could only ever restore unreadable bytes -
+     and a boarding pass is not something to copy around regardless. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="."/>
+    </device-transfer>
+</data-extraction-rules>

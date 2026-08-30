@@ -7,8 +7,22 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for app_dir in "$repo_root"/apps/*/; do
   app_name="$(basename "$app_dir")"
+
+  # Most apps are a Pebble project directly. Apps with a companion phone app
+  # keep the watch side in watchapp/ so the two halves can sit side by side.
+  if [ -f "$app_dir/package.json" ]; then
+    project_dir="$app_dir"
+  elif [ -f "$app_dir/watchapp/package.json" ]; then
+    project_dir="$app_dir/watchapp"
+  else
+    echo "==> Skipping $app_name (no Pebble project found)"
+    continue
+  fi
+
   echo "==> Building $app_name"
-  (cd "$app_dir" && pebble build)
+  (cd "$project_dir" && pebble build)
   mkdir -p "$app_dir/dist"
-  cp "$app_dir/build/$app_name.pbw" "$app_dir/dist/$app_name.pbw"
+  # waf names the bundle after the project directory, which is not always the
+  # app name, so glob for it rather than assuming.
+  cp "$project_dir"/build/*.pbw "$app_dir/dist/$app_name.pbw"
 done

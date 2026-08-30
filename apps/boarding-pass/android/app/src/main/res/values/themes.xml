@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose paints everything; this only needs to keep the system from
+         drawing an action bar before the first frame. -->
+    <style name="Theme.BoardingPass" parent="android:Theme.Material.Light.NoActionBar"/>
+</resources>

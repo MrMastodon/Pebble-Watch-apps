@@ -1,3 +1,9 @@
 build/
 .lock-waf_*
 node_modules/
+
+# Android / Gradle
+.gradle/
+local.properties
+*.apk
+__pycache__/
