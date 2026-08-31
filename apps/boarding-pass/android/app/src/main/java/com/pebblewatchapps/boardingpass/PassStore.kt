@@ -1,16 +1,11 @@
 package com.pebblewatchapps.boardingpass
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.content.edit
 import com.google.zxing.BarcodeFormat
 import java.security.GeneralSecurityException
-import java.security.KeyStore
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
@@ -25,7 +20,10 @@ import javax.crypto.spec.GCMParameterSpec
  * stable successor, and this is roughly the same amount of code without the
  * dependency.
  */
-class PassStore(context: Context) {
+class PassStore(
+    context: Context,
+    private val key: PassKey = AndroidKeystorePassKey(),
+) {
 
     private val preferences =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -36,14 +34,16 @@ class PassStore(context: Context) {
     fun save(payload: String, format: BarcodeFormat) {
         // The symbology travels with the payload so the pass can be re-encoded
         // later exactly as it was read, without another look at the screenshot.
-        val record = "${'$'}{format.name}\n${'$'}payload"
-        val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
+        val record = "${format.name}\n$payload"
+        val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, key.secretKey()) }
         val ciphertext = cipher.doFinal(record.toByteArray(Charsets.UTF_8))
         val stored = cipher.iv + ciphertext
         preferences.edit {
             putString(KEY_PAYLOAD, Base64.encodeToString(stored, Base64.NO_WRAP))
-            // A new pass has not been agreed to yet.
+            // A new pass has not been agreed to yet, and it supersedes any
+            // delete the watch has not caught up with.
             remove(KEY_SUBSTITUTION_ACKNOWLEDGED)
+            remove(KEY_WATCH_DELETE_PENDING)
         }
     }
 
@@ -66,6 +66,15 @@ class PassStore(context: Context) {
         get() = preferences.getBoolean(KEY_SUBSTITUTION_ACKNOWLEDGED, false)
         set(value) = preferences.edit { putBoolean(KEY_SUBSTITUTION_ACKNOWLEDGED, value) }
 
+    /**
+     * Set when the pass was deleted here but the watch was not reachable to be
+     * told. The listener service sends the deletion when the watchapp next
+     * opens, so this deliberately survives [clear].
+     */
+    var watchDeletePending: Boolean
+        get() = preferences.getBoolean(KEY_WATCH_DELETE_PENDING, false)
+        set(value) = preferences.edit { putBoolean(KEY_WATCH_DELETE_PENDING, value) }
+
     /** The "do not ask again" answer, which outlives any single pass. */
     var alwaysAllowSubstitution: Boolean
         get() = preferences.getBoolean(KEY_ALWAYS_ALLOW_SUBSTITUTION, false)
@@ -78,7 +87,7 @@ class PassStore(context: Context) {
             val cipher = Cipher.getInstance(TRANSFORMATION).apply {
                 init(
                     Cipher.DECRYPT_MODE,
-                    secretKey(),
+                    key.secretKey(),
                     GCMParameterSpec(TAG_LENGTH_BITS, bytes, 0, IV_LENGTH_BYTES),
                 )
             }
@@ -104,28 +113,7 @@ class PassStore(context: Context) {
             remove(KEY_PAYLOAD)
             remove(KEY_SUBSTITUTION_ACKNOWLEDGED)
         }
-        runCatching { keyStore().deleteEntry(KEY_ALIAS) }
-    }
-
-    private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-
-    private fun secretKey(): SecretKey {
-        val existing = keyStore().getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry
-        if (existing != null) {
-            return existing.secretKey
-        }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-        )
-        return generator.generateKey()
+        key.discard()
     }
 
     private companion object {
@@ -133,8 +121,7 @@ class PassStore(context: Context) {
         const val KEY_PAYLOAD = "payload"
         const val KEY_SUBSTITUTION_ACKNOWLEDGED = "substitution_acknowledged"
         const val KEY_ALWAYS_ALLOW_SUBSTITUTION = "always_allow_substitution"
-        const val KEYSTORE = "AndroidKeyStore"
-        const val KEY_ALIAS = "boarding_pass_payload"
+        const val KEY_WATCH_DELETE_PENDING = "watch_delete_pending"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_LENGTH_BYTES = 12
         const val TAG_LENGTH_BITS = 128

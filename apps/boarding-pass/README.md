@@ -78,6 +78,7 @@ The label at the bottom of the screen is built from the flight fields alone.
 | 2 | byte array | packed matrix, `ceil(n*n/8)` bytes, row by row, MSB first |
 | 3 | string | short label such as `SK4174 12A` |
 | 4 | uint8 | protocol version, currently 1 |
+| 5 | uint8 | when 1, forget the stored pass; no other key is read |
 
 ## Using it
 
@@ -92,6 +93,12 @@ The label at the bottom of the screen is built from the flight fields alone.
    storage; the phone app also pushes the latest copy whenever the watchapp
    opens, so the watch cannot end up showing a stale pass.
 
+Deleting the pass in the phone app deletes it from the watch too. An AppMessage
+only reaches a watchapp that is open, so if the watch is not showing the app at
+that moment the phone remembers and sends the deletion the next time the
+watchapp opens. Importing a new pass in the meantime cancels the pending
+deletion, since the new pass replaces it anyway.
+
 On the watch, **select** toggles the backlight. A reflective screen sometimes
 scans better with it off under strong light, so that is a choice rather than
 something the app decides for you.
@@ -102,8 +109,9 @@ something the app decides for you.
   so a boarding pass provably cannot leave the phone over the network.
 - The BCBP string carries the booking reference and the frequent flyer number in
   the clear. It is stored encrypted under an AES-GCM key that lives in the
-  Android Keystore, is never logged in any build, and can be deleted from the
-  app's main screen.
+  Android Keystore, and is never logged in any build.
+- Deleting it from the app's main screen deletes it from the watch as well, so
+  a pass that has been thrown away does not linger on the wrist.
 - Backups and device transfer are switched off for the app's data.
 
 ## Building
@@ -163,9 +171,11 @@ sender only ever exists inside the temporary copy.
 cd android && ./gradlew test
 ```
 
-Covers the bit packing against ZXing's own `BitMatrix`, the symbol size ceiling,
-and the BCBP label extraction (including that it leaks neither the name nor the
-booking reference).
+Covers the bit packing against ZXing's own `BitMatrix`, the symbol size ceiling
+and the quiet zone rule, the BCBP label extraction (including that it leaks
+neither the name nor the booking reference), and what storage keeps and drops -
+a deletion the watch has not heard about has to survive being cleared, while a
+newly imported pass has to cancel it.
 
 Reading an image is covered too, under Robolectric in native graphics mode, so
 `BitmapFactory` really decodes and `getPixels` really reads back. The main test

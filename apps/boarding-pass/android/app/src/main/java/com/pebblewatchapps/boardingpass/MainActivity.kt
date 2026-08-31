@@ -173,7 +173,7 @@ private fun BoardingPassScreen(viewModel: BoardingPassViewModel) {
             if (state.hasPass) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { viewModel.deletePass() }, enabled = !state.busy) {
-                    Text("Delete boarding pass from this phone")
+                    Text("Delete boarding pass from phone and watch")
                 }
             }
         }

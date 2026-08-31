@@ -21,10 +21,20 @@ class PebbleListenerService : BasePebbleListenerService() {
             return
         }
         coroutineScope.launch {
+            val store = PassStore(applicationContext)
+
+            // A pass deleted on the phone while the watch was out of reach is
+            // still on the wrist. This is the first moment it can be told.
+            if (withContext(Dispatchers.IO) { store.watchDeletePending }) {
+                if (PebbleLink.sendClear(applicationContext) == PebbleLink.Outcome.Sent) {
+                    withContext(Dispatchers.IO) { store.watchDeletePending = false }
+                }
+                return@launch
+            }
+
             // Decryption and encoding are off the main thread; the base class
             // runs these callbacks on it.
             val pass = withContext(Dispatchers.IO) {
-                val store = PassStore(applicationContext)
                 val stored = store.load() ?: return@withContext null
                 val encoded = try {
                     SymbolEncoder.encode(

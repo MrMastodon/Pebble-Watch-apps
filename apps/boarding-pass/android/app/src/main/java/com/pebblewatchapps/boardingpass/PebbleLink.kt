@@ -21,6 +21,7 @@ object PebbleLink {
     private const val KEY_MATRIX = 2u
     private const val KEY_LABEL = 3u
     private const val KEY_VERSION = 4u
+    private const val KEY_CLEAR = 5u
 
     /** The watch label is a 32-byte buffer; leave room for the terminator. */
     private const val MAX_LABEL_LENGTH = 31
@@ -36,18 +37,40 @@ object PebbleLink {
         data class Failed(val reason: String) : Outcome()
     }
 
-    suspend fun send(context: Context, pass: EncodedPass): Outcome {
+    suspend fun send(context: Context, pass: EncodedPass): Outcome = send(
+        context,
+        mapOf(
+            KEY_VERSION to PebbleDictionaryItem.UInt8(PROTOCOL_VERSION),
+            KEY_MODULES to PebbleDictionaryItem.UInt8(pass.modules),
+            KEY_MATRIX to PebbleDictionaryItem.Bytes(pass.packed),
+            KEY_LABEL to PebbleDictionaryItem.Text(pass.label.take(MAX_LABEL_LENGTH)),
+        ),
+    )
+
+    /**
+     * Tells the watch to forget its stored pass.
+     *
+     * An AppMessage only reaches a watchapp that is open, so this fails
+     * whenever the user is not looking at it. The caller is expected to
+     * remember that and try again when the watchapp next opens - a pass deleted
+     * on the phone should not outlive it on the wrist.
+     */
+    suspend fun sendClear(context: Context): Outcome = send(
+        context,
+        mapOf(
+            KEY_VERSION to PebbleDictionaryItem.UInt8(PROTOCOL_VERSION),
+            KEY_CLEAR to PebbleDictionaryItem.UInt8(1),
+        ),
+    )
+
+    private suspend fun send(
+        context: Context,
+        data: Map<UInt, PebbleDictionaryItem>,
+    ): Outcome {
         val sender = DefaultPebbleSender(context.applicationContext)
         try {
-            val results = sender.sendDataToPebble(
-                WATCHAPP_UUID,
-                mapOf(
-                    KEY_VERSION to PebbleDictionaryItem.UInt8(PROTOCOL_VERSION),
-                    KEY_MODULES to PebbleDictionaryItem.UInt8(pass.modules),
-                    KEY_MATRIX to PebbleDictionaryItem.Bytes(pass.packed),
-                    KEY_LABEL to PebbleDictionaryItem.Text(pass.label.take(MAX_LABEL_LENGTH)),
-                ),
-            ) ?: return Outcome.NoPebbleApp
+            val results = sender.sendDataToPebble(WATCHAPP_UUID, data)
+                ?: return Outcome.NoPebbleApp
 
             if (results.isEmpty()) {
                 return Outcome.NoWatchConnected

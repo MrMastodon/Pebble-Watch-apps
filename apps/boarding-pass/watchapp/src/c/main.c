@@ -20,6 +20,7 @@
 #define MSG_KEY_MATRIX  2
 #define MSG_KEY_LABEL   3
 #define MSG_KEY_VERSION 4
+#define MSG_KEY_CLEAR   5
 
 #define PROTOCOL_VERSION 1
 
@@ -35,6 +36,9 @@
 // How long a transient message (backlight toggled, bad message received)
 // replaces the label at the bottom of the screen.
 #define FLASH_MS 1500
+
+#define DEFAULT_STATUS "No boarding pass yet\n\nSend one from the phone app"
+
 
 static Window *s_window;
 static Layer *s_code_layer;
@@ -77,6 +81,22 @@ static void load_stored_pass(void) {
   if (persist_exists(PERSIST_KEY_LABEL)) {
     persist_read_string(PERSIST_KEY_LABEL, s_label, sizeof(s_label));
   }
+}
+
+// Deletes the stored pass, on request from the phone. A boarding pass that has
+// been deleted on the phone should not outlive it on the wrist.
+static void forget_pass(void) {
+  persist_delete(PERSIST_KEY_MATRIX);
+  persist_delete(PERSIST_KEY_MODULES);
+  persist_delete(PERSIST_KEY_LABEL);
+  s_modules = 0;
+  s_label[0] = '\0';
+  s_flash[0] = '\0';
+  if (s_flash_timer) {
+    app_timer_cancel(s_flash_timer);
+    s_flash_timer = NULL;
+  }
+  snprintf(s_status, sizeof(s_status), "%s", DEFAULT_STATUS);
 }
 
 static void store_pass(void) {
@@ -193,6 +213,13 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     return;
   }
 
+  int32_t clear = 0;
+  if (tuple_int(dict_find(iter, MSG_KEY_CLEAR), &clear) && clear != 0) {
+    forget_pass();
+    update_ui();
+    return;
+  }
+
   int32_t modules = 0;
   if (!tuple_int(dict_find(iter, MSG_KEY_MODULES), &modules) ||
       modules < CODE_MIN_MODULES || modules > CODE_MAX_MODULES) {
@@ -291,7 +318,7 @@ static void window_unload(Window *window) {
 
 static void init(void) {
   s_backlight = persist_exists(PERSIST_KEY_BACKLIGHT) ? persist_read_bool(PERSIST_KEY_BACKLIGHT) : true;
-  snprintf(s_status, sizeof(s_status), "No boarding pass yet\n\nSend one from the phone app");
+  snprintf(s_status, sizeof(s_status), "%s", DEFAULT_STATUS);
   load_stored_pass();
 
   app_message_register_inbox_received(inbox_received_handler);

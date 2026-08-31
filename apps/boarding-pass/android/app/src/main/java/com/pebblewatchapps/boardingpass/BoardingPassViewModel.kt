@@ -117,10 +117,28 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
     }
 
     fun deletePass() {
+        if (_state.value.busy) {
+            return
+        }
+        _state.value = _state.value.copy(busy = true, message = null, isError = false)
+
         viewModelScope.launch {
             withContext(Dispatchers.IO) { store.clear() }
             pass = null
-            _state.value = UiState(message = "Boarding pass deleted from this phone")
+
+            // The watch keeps its own copy so it works with the phone in a bag,
+            // which also means deleting here is not enough on its own.
+            val cleared = PebbleLink.sendClear(getApplication()) == PebbleLink.Outcome.Sent
+            withContext(Dispatchers.IO) { store.watchDeletePending = !cleared }
+
+            _state.value = UiState(
+                message = if (cleared) {
+                    "Deleted from this phone and from the watch"
+                } else {
+                    "Deleted from this phone. The watch clears it the next time you open " +
+                        "the watchapp there."
+                },
+            )
         }
     }
 
