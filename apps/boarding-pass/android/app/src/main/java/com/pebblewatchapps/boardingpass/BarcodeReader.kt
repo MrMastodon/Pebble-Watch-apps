@@ -13,6 +13,8 @@ import com.google.zxing.NotFoundException
 import com.google.zxing.RGBLuminanceSource
 import com.google.zxing.common.GlobalHistogramBinarizer
 import com.google.zxing.common.HybridBinarizer
+import java.io.IOException
+import java.io.InputStream
 
 /**
  * Pulls the Aztec payload out of a screenshot of an airline app.
@@ -39,24 +41,33 @@ object BarcodeReader {
     fun read(context: Context, uri: Uri): String = decode(loadBitmap(context, uri))
 
     private fun loadBitmap(context: Context, uri: Uri): Bitmap {
+        // First pass measures the image. decodeStream returns null here by
+        // contract - with inJustDecodeBounds the answer comes back in `bounds`,
+        // so the size, not the return value, is what says whether this worked.
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, bounds)
-        } ?: throw UnreadableImageException(uri)
-
+        openStream(context, uri).use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             throw UnreadableImageException(uri)
         }
 
+        // Second pass decodes for real, downsampled if the screenshot is huge.
         val options = BitmapFactory.Options().apply {
             inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight)
             // ARGB_8888 keeps getPixels() straightforward, and rules out the
             // hardware-backed bitmaps that cannot be read back.
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, options)
-        } ?: throw UnreadableImageException(uri)
+        return openStream(context, uri).use { BitmapFactory.decodeStream(it, null, options) }
+            ?: throw UnreadableImageException(uri)
+    }
+
+    private fun openStream(context: Context, uri: Uri): InputStream = try {
+        context.contentResolver.openInputStream(uri) ?: throw UnreadableImageException(uri)
+    } catch (error: IOException) {
+        throw UnreadableImageException(uri)
+    } catch (error: SecurityException) {
+        // The share or picker grant has already lapsed.
+        throw UnreadableImageException(uri)
     }
 
     private fun sampleSizeFor(width: Int, height: Int): Int {

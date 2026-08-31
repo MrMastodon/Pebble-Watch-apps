@@ -140,6 +140,11 @@ Covers the bit packing against ZXing's own `BitMatrix`, the symbol size ceiling,
 and the BCBP label extraction (including that it leaks neither the name nor the
 booking reference).
 
+Reading an image is covered too, under Robolectric in native graphics mode, so
+`BitmapFactory` really decodes and `getPixels` really reads back: the test draws
+an Aztec symbol into a screenshot-shaped PNG and asserts the string comes back
+out. That path had shipped broken once, because nothing exercised it.
+
 All test data is synthetic. Real BCBP strings must never be committed here.
 
 ## Not yet verified

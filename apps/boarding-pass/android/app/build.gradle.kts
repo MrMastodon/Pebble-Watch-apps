@@ -40,6 +40,12 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -59,4 +65,8 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.zxing.core)
+    // Robolectric runs the Android graphics stack for real on the JVM, which is
+    // the only way to test BarcodeReader without a device.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }
