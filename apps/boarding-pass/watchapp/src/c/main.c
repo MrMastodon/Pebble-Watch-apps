@@ -28,6 +28,7 @@
 #define PERSIST_KEY_MODULES   2
 #define PERSIST_KEY_LABEL     3
 #define PERSIST_KEY_BACKLIGHT 4
+#define PERSIST_KEY_LIGHT_MODE 5
 
 // The symbol size limits, the packed bit layout and the on-screen geometry all
 // live in code_matrix.h, shared with the host-side round-trip test.
@@ -55,7 +56,40 @@ static char s_status[96];
 static char s_flash[MAX_LABEL_BYTES];
 static AppTimer *s_flash_timer;
 
-static bool s_backlight = true;
+// The screen is reflective, so more light is not always better: under strong
+// sunlight a scanner sometimes reads it best with the backlight off, and the
+// brightest setting costs battery. All three are the user's to pick between.
+typedef enum {
+  LIGHT_OFF,
+  LIGHT_ON,
+  LIGHT_MAX,
+  NUM_LIGHT_MODES,
+} LightMode;
+
+static const char *const LIGHT_MODE_NAMES[NUM_LIGHT_MODES] = {
+  "Light off", "Light on", "Light max"
+};
+
+static LightMode s_light_mode = LIGHT_ON;
+
+// There is no API for the backlight's brightness level - light_enable() is on
+// or off, at whatever intensity the watch is set to. What can be driven is the
+// LED's colour, so the brightest this app can ask for is every channel at full,
+// which also drains the battery fastest. Hence a mode the user opts into rather
+// than the default. On a watch without a colour backlight the tint call does
+// nothing and this behaves exactly like LIGHT_ON.
+static void apply_light_mode(void) {
+  if (s_light_mode == LIGHT_OFF) {
+    light_enable(false);
+    return;
+  }
+  light_enable(true);
+  if (s_light_mode == LIGHT_MAX) {
+    light_set_color_rgb888(0x00FFFFFF);
+  } else {
+    light_set_system_color();
+  }
+}
 
 // ---------------------------------------------------------------- storage --
 
@@ -280,10 +314,10 @@ static void inbox_dropped_handler(AppMessageResult reason, void *context) {
 // A reflective screen sometimes scans better with the backlight off under
 // strong light, so the user gets to decide rather than the app.
 static void select_click_handler(ClickRecognizerRef recognizer, void *context) {
-  s_backlight = !s_backlight;
-  persist_write_bool(PERSIST_KEY_BACKLIGHT, s_backlight);
-  light_enable(s_backlight);
-  flash(s_backlight ? "Light on" : "Light off");
+  s_light_mode = (s_light_mode + 1) % NUM_LIGHT_MODES;
+  persist_write_int(PERSIST_KEY_LIGHT_MODE, s_light_mode);
+  apply_light_mode();
+  flash(LIGHT_MODE_NAMES[s_light_mode]);
 }
 
 static void click_config_provider(void *context) {
@@ -317,7 +351,7 @@ static void window_load(Window *window) {
   text_layer_set_text_alignment(s_status_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_status_layer));
 
-  light_enable(s_backlight);
+  apply_light_mode();
   update_ui();
 }
 
@@ -332,8 +366,23 @@ static void window_unload(Window *window) {
   layer_destroy(s_code_layer);
 }
 
+// Key 4 held a plain on/off flag before there was a third mode; read it once so
+// an existing install keeps the choice it had.
+static LightMode stored_light_mode(void) {
+  if (persist_exists(PERSIST_KEY_LIGHT_MODE)) {
+    const int32_t stored = persist_read_int(PERSIST_KEY_LIGHT_MODE);
+    if (stored >= 0 && stored < NUM_LIGHT_MODES) {
+      return (LightMode)stored;
+    }
+  }
+  if (persist_exists(PERSIST_KEY_BACKLIGHT)) {
+    return persist_read_bool(PERSIST_KEY_BACKLIGHT) ? LIGHT_ON : LIGHT_OFF;
+  }
+  return LIGHT_ON;
+}
+
 static void init(void) {
-  s_backlight = persist_exists(PERSIST_KEY_BACKLIGHT) ? persist_read_bool(PERSIST_KEY_BACKLIGHT) : true;
+  s_light_mode = stored_light_mode();
   snprintf(s_status, sizeof(s_status), "%s", DEFAULT_STATUS);
   load_stored_pass();
 

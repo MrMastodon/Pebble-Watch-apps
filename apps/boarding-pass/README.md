@@ -111,9 +111,17 @@ phone remembers and sends the deletion the next time the watchapp opens.
 Importing a new pass in the meantime cancels the pending deletion; a stored pass
 always wins over a deletion left over from before it.
 
-On the watch, **select** toggles the backlight. A reflective screen sometimes
-scans better with it off under strong light, so that is a choice rather than
-something the app decides for you.
+On the watch, **select** cycles the backlight: on, brightest, off. A reflective
+screen sometimes scans better with the light off under strong sunlight, so that
+is a choice rather than something the app decides for you. The setting is
+remembered.
+
+"Brightest" is not a brightness level - Pebble has no API for that, and
+`light_enable()` uses whatever intensity the watch is set to. What it does is
+drive every channel of the backlight LED to full, which is the most light the
+app can ask for and also the fastest way to spend the battery, which is why it
+is a step you opt into rather than the default. On a watch without a colour
+backlight it behaves the same as "on".
 
 ## Privacy
 
