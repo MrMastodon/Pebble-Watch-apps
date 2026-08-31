@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.google.zxing.BarcodeFormat
+import com.google.zxing.Binarizer
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.LuminanceSource
@@ -20,9 +21,8 @@ import java.io.InputStream
  * Pulls the Aztec payload out of a screenshot of an airline app.
  *
  * The screenshot is mostly UI chrome, so the reader is told to expect Aztec and
- * nothing else and to try hard, and two binarizers are attempted: HybridBinarizer
- * handles the usual case, while GlobalHistogramBinarizer copes better with the
- * flat, evenly lit rendering a screenshot actually is.
+ * nothing else and to try hard, two binarizers are attempted, and the image is
+ * searched in overlapping windows rather than only as a whole.
  */
 object BarcodeReader {
 
@@ -78,28 +78,73 @@ object BarcodeReader {
         return sampleSize
     }
 
+    private val HINTS = mapOf(
+        DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.AZTEC),
+        DecodeHintType.TRY_HARDER to true,
+    )
+
+    /**
+     * HybridBinarizer handles the usual case; GlobalHistogramBinarizer copes
+     * better with the flat, evenly lit rendering a screenshot actually is.
+     */
+    private val BINARIZERS = listOf<(LuminanceSource) -> Binarizer>(
+        { HybridBinarizer(it) },
+        { GlobalHistogramBinarizer(it) },
+    )
+
     private fun decode(bitmap: Bitmap): String {
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         val source = RGBLuminanceSource(bitmap.width, bitmap.height, pixels)
 
-        val hints = mapOf(
-            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.AZTEC),
-            DecodeHintType.TRY_HARDER to true,
-        )
-
-        val binarizers = listOf<(LuminanceSource) -> BinaryBitmap>(
-            { BinaryBitmap(HybridBinarizer(it)) },
-            { BinaryBitmap(GlobalHistogramBinarizer(it)) },
-        )
-
-        for (binarizer in binarizers) {
-            try {
-                return MultiFormatReader().decode(binarizer(source), hints).text
-            } catch (_: NotFoundException) {
-                // Try the next binarizer.
+        for (region in searchRegions(source)) {
+            for (binarizer in BINARIZERS) {
+                try {
+                    return MultiFormatReader().decode(BinaryBitmap(binarizer(region)), HINTS).text
+                } catch (_: NotFoundException) {
+                    // Try the next binarizer, then the next region.
+                }
             }
         }
         throw NotFoundInImageException()
+    }
+
+    /**
+     * The whole image first, then a grid of half-overlapping square windows.
+     *
+     * ZXing's Aztec detector hunts for the central bullseye outwards from the
+     * middle of whatever it is handed. On a phone screenshot the code sits near
+     * the top and the middle of the image is empty space below it, so the
+     * detector never finds it and no amount of binarizing or TRY_HARDER helps.
+     * Sliding a window across the image puts the code near the middle of one of
+     * them. The windows are lazy, so a code that the whole image already finds
+     * costs nothing extra.
+     */
+    private fun searchRegions(source: LuminanceSource): Sequence<LuminanceSource> = sequence {
+        yield(source)
+        if (!source.isCropSupported) {
+            return@sequence
+        }
+
+        val window = minOf(source.width, source.height)
+        val step = (window / 2).coerceAtLeast(1)
+
+        var top = 0
+        while (true) {
+            var left = 0
+            while (true) {
+                val width = minOf(window, source.width - left)
+                val height = minOf(window, source.height - top)
+                val isWholeImage = left == 0 && top == 0 &&
+                    width == source.width && height == source.height
+                if (width > 0 && height > 0 && !isWholeImage) {
+                    yield(source.crop(left, top, width, height))
+                }
+                if (left + window >= source.width) break
+                left += step
+            }
+            if (top + window >= source.height) break
+            top += step
+        }
     }
 }

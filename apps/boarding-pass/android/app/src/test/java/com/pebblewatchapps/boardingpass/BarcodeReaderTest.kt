@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.aztec.AztecWriter
+import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -34,10 +35,45 @@ class BarcodeReaderTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
-    fun `reads an aztec code out of a screenshot`() {
-        val uri = Uri.fromFile(screenshotContaining(SYNTHETIC_BCBP))
+    fun `reads an aztec code out of a tightly cropped image`() {
+        val file = screenshotContaining(
+            SYNTHETIC_BCBP,
+            name = "tight.png",
+            canvasWidth = 420,
+            canvasHeight = 420,
+            top = 30,
+            scale = 10,
+        )
 
-        val payload = BarcodeReader.read(ApplicationProvider.getApplicationContext(), uri)
+        val payload = BarcodeReader.read(
+            ApplicationProvider.getApplicationContext(),
+            Uri.fromFile(file),
+        )
+
+        assertEquals(SYNTHETIC_BCBP, payload)
+    }
+
+    /**
+     * The shape that actually broke in the field: a full-height phone
+     * screenshot with the code up near the top and a large empty area below it.
+     * ZXing's Aztec detector searches outwards from the middle of the image,
+     * which here is blank, so decoding the image as a whole finds nothing.
+     */
+    @Test
+    fun `reads a code sitting near the top of a full phone screenshot`() {
+        val file = screenshotContaining(
+            SYNTHETIC_BCBP,
+            name = "phone.png",
+            canvasWidth = 1080,
+            canvasHeight = 2340,
+            top = 300,
+            scale = 10,
+        )
+
+        val payload = BarcodeReader.read(
+            ApplicationProvider.getApplicationContext(),
+            Uri.fromFile(file),
+        )
 
         assertEquals(SYNTHETIC_BCBP, payload)
     }
@@ -45,7 +81,13 @@ class BarcodeReaderTest {
     @Test
     fun `reports an image with no barcode in it`() {
         val blank = temporaryFolder.newFile("blank.png")
-        ImageIO.write(BufferedImage(400, 800, BufferedImage.TYPE_INT_RGB), "png", blank)
+        val white = BufferedImage(1080, 2340, BufferedImage.TYPE_INT_RGB)
+        white.createGraphics().apply {
+            paint = Color.WHITE
+            fillRect(0, 0, white.width, white.height)
+            dispose()
+        }
+        ImageIO.write(white, "png", blank)
 
         val error = runCatching {
             BarcodeReader.read(ApplicationProvider.getApplicationContext(), Uri.fromFile(blank))
@@ -67,33 +109,36 @@ class BarcodeReaderTest {
     }
 
     /**
-     * An Aztec symbol drawn small inside a much larger white canvas, roughly how
-     * it sits in a phone screenshot surrounded by app chrome.
+     * An Aztec symbol drawn into a canvas of the given size, at the given
+     * offset, with everything else left white - roughly how the code sits in a
+     * screenshot surrounded by app chrome.
      */
-    private fun screenshotContaining(payload: String): File {
+    private fun screenshotContaining(
+        payload: String,
+        name: String,
+        canvasWidth: Int,
+        canvasHeight: Int,
+        top: Int,
+        scale: Int,
+    ): File {
         val matrix = AztecWriter().encode(payload, BarcodeFormat.AZTEC, 0, 0)
-        val scale = 8
-        val margin = 60
+        val left = (canvasWidth - matrix.width * scale) / 2
 
-        val image = BufferedImage(
-            matrix.width * scale + margin * 2,
-            matrix.height * scale + margin * 2 + 200,
-            BufferedImage.TYPE_INT_RGB,
-        )
+        val image = BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB)
         val graphics = image.createGraphics()
-        graphics.paint = java.awt.Color.WHITE
-        graphics.fillRect(0, 0, image.width, image.height)
-        graphics.paint = java.awt.Color.BLACK
+        graphics.paint = Color.WHITE
+        graphics.fillRect(0, 0, canvasWidth, canvasHeight)
+        graphics.paint = Color.BLACK
         for (row in 0 until matrix.height) {
             for (column in 0 until matrix.width) {
                 if (matrix.get(column, row)) {
-                    graphics.fillRect(margin + column * scale, margin + row * scale, scale, scale)
+                    graphics.fillRect(left + column * scale, top + row * scale, scale, scale)
                 }
             }
         }
         graphics.dispose()
 
-        val file = temporaryFolder.newFile("screenshot.png")
+        val file = temporaryFolder.newFile(name)
         ImageIO.write(image, "png", file)
         return file
     }

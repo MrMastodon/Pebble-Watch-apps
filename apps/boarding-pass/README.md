@@ -60,7 +60,8 @@ The label at the bottom of the screen is built from the flight fields alone.
 2. Build and install the Android app.
 3. Screenshot the barcode in your airline's app, then share the screenshot with
    **Boarding Pass** from the share sheet. (The in-app picker works too, for a
-   screenshot you took earlier.)
+   screenshot you took earlier.) A plain full-screen screenshot is fine - there
+   is no need to crop it down to the barcode.
 4. Open **Boarding Pass** on the watch. The code is drawn immediately from
    storage; the phone app also pushes the latest copy whenever the watchapp
    opens, so the watch cannot end up showing a stale pass.
@@ -141,9 +142,10 @@ and the BCBP label extraction (including that it leaks neither the name nor the
 booking reference).
 
 Reading an image is covered too, under Robolectric in native graphics mode, so
-`BitmapFactory` really decodes and `getPixels` really reads back: the test draws
-an Aztec symbol into a screenshot-shaped PNG and asserts the string comes back
-out. That path had shipped broken once, because nothing exercised it.
+`BitmapFactory` really decodes and `getPixels` really reads back: the tests draw
+an Aztec symbol into a PNG and assert the string comes back out. One of them
+uses a full 1080x2340 canvas with the code up near the top, which is the layout
+of a real phone screenshot and the one that ZXing does not find on its own.
 
 All test data is synthetic. Real BCBP strings must never be committed here.
 
