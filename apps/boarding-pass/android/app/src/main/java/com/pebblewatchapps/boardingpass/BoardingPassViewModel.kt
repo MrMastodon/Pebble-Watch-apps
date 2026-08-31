@@ -26,6 +26,10 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         val isError: Boolean = false,
         /** Set when the watch would show a symbology the airline did not issue. */
         val substitutionToConfirm: Substitution? = null,
+        /** Pebble apps the user still has to choose between; empty once settled. */
+        val pebbleAppChoices: List<String> = emptyList(),
+        val pebbleApp: String? = null,
+        val canChangePebbleApp: Boolean = false,
     ) {
         val hasPass: Boolean get() = modules > 0
         val isSubstituted: Boolean get() = format != null && format != sourceFormat
@@ -40,6 +44,7 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        refreshPebbleApp()
         viewModelScope.launch {
             val encoded = withContext(Dispatchers.IO) {
                 store.load()?.let { stored -> runCatching { encode(stored) }.getOrNull() }
@@ -55,12 +60,46 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun choosePebbleApp(packageName: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { PebbleApps.select(getApplication(), packageName) }
+            refreshPebbleApp()
+        }
+    }
+
+    fun forgetPebbleApp() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { PebbleApps.select(getApplication(), null) }
+            refreshPebbleApp()
+        }
+    }
+
+    private fun refreshPebbleApp() {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val choices = withContext(Dispatchers.IO) { PebbleApps.resolve(context) }
+            val selected = withContext(Dispatchers.IO) { PebbleApps.selected(context) }
+            val installed = withContext(Dispatchers.IO) { PebbleApps.installed(context) }
+            _state.value = _state.value.copy(
+                pebbleAppChoices = choices,
+                pebbleApp = selected,
+                canChangePebbleApp = installed.size > 1,
+            )
+        }
+    }
+
     /** Reads a shared or picked screenshot, stores the pass and sends it on. */
     fun import(uri: Uri) {
         if (_state.value.busy) {
             return
         }
-        _state.value = _state.value.copy(busy = true, message = null, isError = false)
+        _state.value = _state.value.copy(
+            busy = true,
+            message = null,
+            isError = false,
+            // Whatever was being asked about is about to be replaced.
+            substitutionToConfirm = null,
+        )
 
         viewModelScope.launch {
             val encoded = try {
@@ -72,6 +111,12 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
                     store.save(scanned.text, scanned.format)
                     encoded
                 }
+            } catch (error: OutOfMemoryError) {
+                // Decoding allocates in proportion to the image. The candidate
+                // search is bounded, but a device under memory pressure can
+                // still run out, and an Error would otherwise take the app down.
+                fail(error)
+                return@launch
             } catch (error: Exception) {
                 fail(error)
                 return@launch
@@ -203,7 +248,7 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         Bcbp.label(stored.payload) ?: WatchSync.DEFAULT_LABEL,
     )
 
-    private fun fail(error: Exception) {
+    private fun fail(error: Throwable) {
         // Never log the payload itself - it carries the booking reference and
         // the frequent flyer number in the clear.
         val message = when (error) {
@@ -212,6 +257,8 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
                     "barcode fully visible and unobscured."
             is BarcodeReader.UnreadableImageException ->
                 "That image could not be opened."
+            is OutOfMemoryError ->
+                "That image was too large for this phone to process. Try a plain screenshot."
             is SymbolEncoder.TooLargeException ->
                 "This boarding pass needs ${error.modules} modules, more than the watch can show legibly."
             else -> "Could not read that image: ${error.javaClass.simpleName}"

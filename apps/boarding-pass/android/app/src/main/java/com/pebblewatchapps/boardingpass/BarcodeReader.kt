@@ -140,7 +140,7 @@ object BarcodeReader {
      * first, centred in its own canvas. The sequence is lazy, so an image that
      * decodes whole never pays for the blob search.
      */
-    private fun searchRegions(source: LuminanceSource): Sequence<LuminanceSource> = sequence {
+    internal fun searchRegions(source: LuminanceSource): Sequence<LuminanceSource> = sequence {
         yield(source)
         for (blob in busyBlobs(source)) {
             yield(centred(source, blob))
@@ -229,13 +229,44 @@ object BarcodeReader {
 
             val blobWidth = (maxColumn - minColumn + 1) * cell
             val blobHeight = (maxRow - minRow + 1) * cell
-            if (blobWidth >= MIN_BLOB_PIXELS && blobHeight >= MIN_BLOB_PIXELS) {
+            if (blobWidth >= MIN_BLOB_PIXELS && blobHeight >= MIN_BLOB_PIXELS &&
+                isWorthCentring(blobWidth, blobHeight, width, height)
+            ) {
                 blobs.add(Blob(minColumn * cell, minRow * cell, blobWidth, blobHeight, count))
             }
         }
 
         return blobs.sortedByDescending { it.cells }.take(MAX_CANDIDATES)
     }
+
+    /**
+     * Whether a blob is worth copying out at all.
+     *
+     * A photo of a screen, or any busy image, has detail everywhere and comes
+     * back as one blob spanning the lot. Centring that gains nothing - the whole
+     * image is already the first thing tried - and the padded canvas it would
+     * need is enormous: for a 1080x2340 image, 3270x3270 pixels, 43 MB in one
+     * allocation, on top of the bitmap. An OutOfMemoryError is an Error rather
+     * than an Exception, so that took the app down rather than failing the
+     * import.
+     */
+    private fun isWorthCentring(
+        blobWidth: Int,
+        blobHeight: Int,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
+        if (blobWidth * SPANS_SOURCE_PERCENT >= sourceWidth * 100 &&
+            blobHeight * SPANS_SOURCE_PERCENT >= sourceHeight * 100
+        ) {
+            return false
+        }
+        val side = paddedSide(blobWidth, blobHeight)
+        return side.toLong() * side <= MAX_CANDIDATE_PIXELS
+    }
+
+    private fun paddedSide(blobWidth: Int, blobHeight: Int): Int =
+        (maxOf(blobWidth, blobHeight) * PADDING).toInt().coerceAtLeast(1)
 
     /**
      * The blob copied into the middle of a larger white square.
@@ -250,7 +281,7 @@ object BarcodeReader {
         val height = source.height
         val luminance = source.matrix
 
-        val side = (maxOf(blob.width, blob.height) * PADDING).toInt().coerceAtLeast(1)
+        val side = paddedSide(blob.width, blob.height)
         val pixels = IntArray(side * side)
         pixels.fill(WHITE)
 
@@ -283,6 +314,12 @@ object BarcodeReader {
 
     /** How much white to leave around a blob, as a multiple of its longer side. */
     private const val PADDING = 1.4f
+
+    /** A blob at least this much of the source in both directions is the source. */
+    private const val SPANS_SOURCE_PERCENT = 90
+
+    /** Ceiling on a padded candidate, matching the cap on the image itself. */
+    internal const val MAX_CANDIDATE_PIXELS = 4_000_000L
 
     private const val WHITE_ALPHA = 0xFF000000.toInt()
     private const val WHITE = 0xFFFFFFFF.toInt()

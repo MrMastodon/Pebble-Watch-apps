@@ -2,7 +2,10 @@ package com.pebblewatchapps.boardingpass
 
 import io.rebble.pebblekit2.client.BasePebbleListenerService
 import io.rebble.pebblekit2.common.model.WatchIdentifier
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -16,6 +19,16 @@ import java.util.UUID
  * watchapp itself in order to send.
  */
 class PebbleListenerService : BasePebbleListenerService() {
+
+    // The base class would leave its scope running past onDestroy. Nothing here
+    // should outlive the service: if the Pebble app has let go of us, whatever
+    // we were pushing is no longer wanted.
+    override val coroutineScope: CoroutineScope = MainScope()
+
+    override fun onDestroy() {
+        coroutineScope.cancel()
+        super.onDestroy()
+    }
 
     override fun onAppOpened(watchappUUID: UUID, watch: WatchIdentifier) {
         if (watchappUUID != PebbleLink.WATCHAPP_UUID) {

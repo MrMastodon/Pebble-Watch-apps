@@ -108,6 +108,13 @@ private fun BoardingPassScreen(viewModel: BoardingPassViewModel) {
         ) {
             Text("Boarding Pass", style = MaterialTheme.typography.headlineMedium)
 
+            if (state.pebbleAppChoices.isNotEmpty()) {
+                PebbleAppChooser(
+                    choices = state.pebbleAppChoices,
+                    onChoose = viewModel::choosePebbleApp,
+                )
+            }
+
             if (state.hasPass) {
                 Text(state.label.orEmpty(), style = MaterialTheme.typography.displaySmall)
                 Text(
@@ -182,6 +189,47 @@ private fun BoardingPassScreen(viewModel: BoardingPassViewModel) {
                 TextButton(onClick = { viewModel.deletePass() }, enabled = !state.busy) {
                     Text("Delete boarding pass from phone and watch")
                 }
+            }
+
+            if (state.canChangePebbleApp && state.pebbleApp != null) {
+                Text(
+                    "Sending through ${state.pebbleApp}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = { viewModel.forgetPebbleApp() }, enabled = !state.busy) {
+                    Text("Use a different Pebble app")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Asks which Pebble app may carry the boarding pass.
+ *
+ * Only shown when there is a real choice. PebbleKit would otherwise talk to
+ * whichever app answers first, and answering only takes an intent filter any
+ * app can declare - so with more than one candidate installed, the user names
+ * the one that gets the pass.
+ */
+@Composable
+private fun PebbleAppChooser(choices: List<String>, onChoose: (String) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Which Pebble app may carry your boarding pass?",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            "More than one app on this phone offers to talk to a Pebble. Your " +
+                "boarding pass is only sent to the one you pick here.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        for (choice in choices) {
+            Button(onClick = { onChoose(choice) }, modifier = Modifier.fillMaxWidth()) {
+                Text(choice)
             }
         }
     }

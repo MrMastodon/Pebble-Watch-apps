@@ -119,6 +119,13 @@ something the app decides for you.
 
 - The Android app has no `INTERNET` permission at all. Not "unused" - absent,
   so a boarding pass provably cannot leave the phone over the network.
+- Only one named Pebble app may carry the pass. PebbleKit's default is to talk
+  to whichever app answers first, and answering takes nothing but an intent
+  filter any app can declare - the library's own manifest notes the permissions
+  that used to guard this are no longer enforced. Since the matrix is the whole
+  BCBP string, name and booking reference included, that default is turned off.
+  With one Pebble app installed the choice is made silently; with more than one
+  the app asks.
 - The BCBP string carries the booking reference and the frequent flyer number in
   the clear. It is stored encrypted under an AES-GCM key that lives in the
   Android Keystore, and is never logged in any build.

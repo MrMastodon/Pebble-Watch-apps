@@ -100,8 +100,20 @@ static void forget_pass(void) {
 }
 
 static void store_pass(void) {
+  // The matrix goes first, and its module count only once it is safely down.
+  // Storage can be full, and a matrix whose length no longer matches its
+  // recorded size would just be thrown away at the next start anyway - better
+  // to leave nothing than to leave half of something.
+  const size_t wanted = code_matrix_bytes(s_modules);
+  const int written = persist_write_data(PERSIST_KEY_MATRIX, s_matrix, wanted);
+  if (written != (int)wanted) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "could not store the pass: %d", written);
+    persist_delete(PERSIST_KEY_MATRIX);
+    persist_delete(PERSIST_KEY_MODULES);
+    persist_delete(PERSIST_KEY_LABEL);
+    return;
+  }
   persist_write_int(PERSIST_KEY_MODULES, s_modules);
-  persist_write_data(PERSIST_KEY_MATRIX, s_matrix, code_matrix_bytes(s_modules));
   persist_write_string(PERSIST_KEY_LABEL, s_label);
 }
 
@@ -237,11 +249,15 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   memcpy(s_matrix, matrix->value->data, matrix->length);
   s_modules = modules;
 
+  // Copy by length rather than with %s: the terminator is the sender's promise,
+  // and this message comes from outside the watch's address space.
   const Tuple *label = dict_find(iter, MSG_KEY_LABEL);
-  if (label && label->type == TUPLE_CSTRING) {
-    snprintf(s_label, sizeof(s_label), "%s", label->value->cstring);
-  } else {
-    s_label[0] = '\0';
+  s_label[0] = '\0';
+  if (label && label->type == TUPLE_CSTRING && label->length > 0) {
+    const size_t copied = label->length < sizeof(s_label) ? label->length
+                                                          : sizeof(s_label) - 1;
+    memcpy(s_label, label->value->cstring, copied);
+    s_label[copied] = '\0';
   }
 
   s_flash[0] = '\0';
