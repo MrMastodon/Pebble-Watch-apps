@@ -115,6 +115,10 @@ private fun BoardingPassScreen(viewModel: BoardingPassViewModel) {
                         "${(state.modules * state.modules + 7) / 8} bytes on the watch",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                Text(
+                    if (state.onWatch) "On the watch" else "Not on the watch yet",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (state.isSubstituted) {
                     Text(
                         "Read as ${symbologyName(state.sourceFormat)}, which is too wide to draw " +
@@ -144,7 +148,10 @@ private fun BoardingPassScreen(viewModel: BoardingPassViewModel) {
                 Text(if (state.hasPass) "Pick another screenshot" else "Pick a screenshot")
             }
 
-            if (state.hasPass) {
+            // Sharing a screenshot sends it straight to the watch, so this is
+            // only here for the cases where that did not happen: the watch was
+            // out of reach, or a substitution was declined and reconsidered.
+            if (state.hasPass && !state.onWatch) {
                 Button(
                     onClick = { viewModel.sendToWatch() },
                     enabled = !state.busy,

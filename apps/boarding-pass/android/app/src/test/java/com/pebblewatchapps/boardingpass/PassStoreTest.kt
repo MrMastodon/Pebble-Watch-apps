@@ -45,6 +45,27 @@ class PassStoreTest {
     }
 
     @Test
+    fun `a newly imported pass is not on the watch yet`() {
+        store.save(SYNTHETIC_BCBP, BarcodeFormat.AZTEC)
+        store.deliveredToWatch = true
+
+        // Replacing the pass means the watch is showing the old one.
+        store.save(SYNTHETIC_BCBP, BarcodeFormat.QR_CODE)
+
+        assertFalse(store.deliveredToWatch)
+    }
+
+    @Test
+    fun `deleting the pass forgets that the watch had it`() {
+        store.save(SYNTHETIC_BCBP, BarcodeFormat.AZTEC)
+        store.deliveredToWatch = true
+
+        store.clear()
+
+        assertFalse(store.deliveredToWatch)
+    }
+
+    @Test
     fun `a stored pass comes back with its symbology`() {
         store.save(SYNTHETIC_BCBP, BarcodeFormat.PDF_417)
 

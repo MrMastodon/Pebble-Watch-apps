@@ -44,6 +44,8 @@ class PassStore(
             // delete the watch has not caught up with.
             remove(KEY_SUBSTITUTION_ACKNOWLEDGED)
             remove(KEY_WATCH_DELETE_PENDING)
+            // A pass nobody has sent yet is not on the watch.
+            remove(KEY_DELIVERED_TO_WATCH)
         }
     }
 
@@ -65,6 +67,16 @@ class PassStore(
     var substitutionAcknowledged: Boolean
         get() = preferences.getBoolean(KEY_SUBSTITUTION_ACKNOWLEDGED, false)
         set(value) = preferences.edit { putBoolean(KEY_SUBSTITUTION_ACKNOWLEDGED, value) }
+
+    /**
+     * Whether this exact pass is known to have reached the watch. Only used to
+     * decide whether to offer a send button - the watch is pushed the current
+     * pass whenever the watchapp opens regardless, so a wrong answer here heals
+     * itself rather than stranding anything.
+     */
+    var deliveredToWatch: Boolean
+        get() = preferences.getBoolean(KEY_DELIVERED_TO_WATCH, false)
+        set(value) = preferences.edit { putBoolean(KEY_DELIVERED_TO_WATCH, value) }
 
     /**
      * Set when the pass was deleted here but the watch was not reachable to be
@@ -112,6 +124,7 @@ class PassStore(
         preferences.edit {
             remove(KEY_PAYLOAD)
             remove(KEY_SUBSTITUTION_ACKNOWLEDGED)
+            remove(KEY_DELIVERED_TO_WATCH)
         }
         key.discard()
     }
@@ -122,6 +135,7 @@ class PassStore(
         const val KEY_SUBSTITUTION_ACKNOWLEDGED = "substitution_acknowledged"
         const val KEY_ALWAYS_ALLOW_SUBSTITUTION = "always_allow_substitution"
         const val KEY_WATCH_DELETE_PENDING = "watch_delete_pending"
+        const val KEY_DELIVERED_TO_WATCH = "delivered_to_watch"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_LENGTH_BYTES = 12
         const val TAG_LENGTH_BITS = 128

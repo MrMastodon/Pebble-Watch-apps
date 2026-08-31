@@ -99,6 +99,11 @@ wrist rather than asking you to. It also pushes the latest copy whenever the
 watchapp opens by any means, so the watch cannot end up showing a pass the phone
 has since replaced.
 
+The app screen says whether the pass is on the watch, and offers a **Send to
+watch** button only when it is not - the watch was out of reach when you shared
+the screenshot, or you declined a symbology substitution and changed your mind.
+In the ordinary case there is nothing to press.
+
 Deleting the pass in the phone app deletes it from the watch too. That one does
 not open the watchapp on your wrist - popping an app up only to tell it to
 forget something is not worth it - so if the watch is not showing the app the

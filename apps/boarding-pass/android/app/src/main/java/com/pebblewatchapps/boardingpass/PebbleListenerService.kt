@@ -26,7 +26,10 @@ class PebbleListenerService : BasePebbleListenerService() {
             // Decryption and encoding are off the main thread; the base class
             // runs these callbacks on it.
             when (val action = withContext(Dispatchers.IO) { WatchSync.pendingAction(store) }) {
-                is WatchSync.Action.Send -> PebbleLink.send(applicationContext, action.pass)
+                is WatchSync.Action.Send -> {
+                    val sent = PebbleLink.send(applicationContext, action.pass).isSent
+                    withContext(Dispatchers.IO) { store.deliveredToWatch = sent }
+                }
 
                 WatchSync.Action.Clear ->
                     if (PebbleLink.sendClear(applicationContext).isSent) {

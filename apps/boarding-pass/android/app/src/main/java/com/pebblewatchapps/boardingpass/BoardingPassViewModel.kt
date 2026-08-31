@@ -19,6 +19,8 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         val modules: Int = 0,
         val format: BarcodeFormat? = null,
         val sourceFormat: BarcodeFormat? = null,
+        /** Known to have reached the watch, so no send button is needed. */
+        val onWatch: Boolean = false,
         val busy: Boolean = false,
         val message: String? = null,
         val isError: Boolean = false,
@@ -48,6 +50,7 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
                 modules = encoded.modules,
                 format = encoded.format,
                 sourceFormat = encoded.sourceFormat,
+                onWatch = withContext(Dispatchers.IO) { store.deliveredToWatch },
             )
         }
     }
@@ -80,6 +83,7 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
                 modules = encoded.modules,
                 format = encoded.format,
                 sourceFormat = encoded.sourceFormat,
+                onWatch = false,
             )
             sendOrAsk()
         }
@@ -184,10 +188,12 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
                 "Saved. No watch connected, so it will go across next time the watchapp opens."
             is PebbleLink.Outcome.Failed -> "Could not send: ${outcome.reason}"
         }
+        withContext(Dispatchers.IO) { store.deliveredToWatch = outcome.isSent }
         _state.value = _state.value.copy(
             busy = false,
             message = message,
             isError = !outcome.isSent,
+            onWatch = outcome.isSent,
         )
     }
 
