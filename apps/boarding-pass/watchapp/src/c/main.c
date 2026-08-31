@@ -1,16 +1,17 @@
 #include <pebble.h>
 
-#include "aztec_matrix.h"
+#include "code_matrix.h"
 
-// Displays a boarding pass barcode as a scannable Aztec symbol.
+// Displays a boarding pass barcode as a scannable 2D symbol.
 //
-// The watch never encodes anything: the Android companion app decodes the
-// barcode out of a screenshot of the airline app, re-encodes it with ZXing and
-// sends the finished module matrix here as a packed bit array. All this app
-// does is unpack those bits and paint them as black squares - which is exactly
-// the part that has to keep working when the phone is in a bag at the gate, so
-// the last matrix received is kept in persistent storage and drawn at startup
-// without needing a phone at all.
+// The watch never encodes anything, and never learns which symbology it is
+// drawing: the Android companion app reads the barcode out of a screenshot of
+// the airline app, re-encodes it with ZXing and sends the finished module
+// matrix here as a packed bit array. Aztec, QR and Data Matrix all arrive as
+// the same square grid. All this app does is unpack those bits and paint them
+// as black squares - which is exactly the part that has to keep working when
+// the phone is in a bag at the gate, so the last matrix received is kept in
+// persistent storage and drawn at startup without needing a phone at all.
 
 // AppMessage keys. Protocol version 1; the phone app sends MSG_KEY_VERSION so
 // a newer phone app talking to an older watchapp fails loudly instead of
@@ -28,7 +29,7 @@
 #define PERSIST_KEY_BACKLIGHT 4
 
 // The symbol size limits, the packed bit layout and the on-screen geometry all
-// live in aztec_matrix.h, shared with the host-side round-trip test.
+// live in code_matrix.h, shared with the host-side round-trip test.
 #define MAX_LABEL_BYTES 32
 
 // How long a transient message (backlight toggled, bad message received)
@@ -42,7 +43,7 @@ static TextLayer *s_status_layer;
 
 // The matrix, packed row by row, MSB first - the same layout the phone app
 // produces. s_modules is 0 when nothing usable is stored.
-static uint8_t s_matrix[AZTEC_MAX_MATRIX_BYTES];
+static uint8_t s_matrix[CODE_MAX_MATRIX_BYTES];
 static int s_modules;
 static char s_label[MAX_LABEL_BYTES];
 
@@ -63,12 +64,12 @@ static void load_stored_pass(void) {
   }
 
   const int32_t modules = persist_read_int(PERSIST_KEY_MODULES);
-  if (modules < AZTEC_MIN_MODULES || modules > AZTEC_MAX_MODULES) {
+  if (modules < CODE_MIN_MODULES || modules > CODE_MAX_MODULES) {
     return;
   }
 
   const int read = persist_read_data(PERSIST_KEY_MATRIX, s_matrix, sizeof(s_matrix));
-  if (read != (int)aztec_matrix_bytes(modules)) {
+  if (read != (int)code_matrix_bytes(modules)) {
     return;
   }
 
@@ -80,7 +81,7 @@ static void load_stored_pass(void) {
 
 static void store_pass(void) {
   persist_write_int(PERSIST_KEY_MODULES, s_modules);
-  persist_write_data(PERSIST_KEY_MATRIX, s_matrix, aztec_matrix_bytes(s_modules));
+  persist_write_data(PERSIST_KEY_MATRIX, s_matrix, code_matrix_bytes(s_modules));
   persist_write_string(PERSIST_KEY_LABEL, s_label);
 }
 
@@ -97,15 +98,15 @@ static void code_layer_update_proc(Layer *layer, GContext *ctx) {
     return;
   }
 
-  const int px = aztec_pixels_per_module(bounds.size.w, s_modules);
+  const int px = code_pixels_per_module(bounds.size.w, s_modules);
   const int size = px * s_modules;
   const int ox = bounds.origin.x + (bounds.size.w - size) / 2;
-  const int oy = bounds.origin.y + AZTEC_SYMBOL_TOP;
+  const int oy = bounds.origin.y + (bounds.size.h - size) / 2;
 
   graphics_context_set_fill_color(ctx, GColorBlack);
   for (int row = 0; row < s_modules; row++) {
     int col = 0, run_start = 0, run_length = 0;
-    while (aztec_next_run(s_matrix, s_modules, row, &col, &run_start, &run_length)) {
+    while (code_next_run(s_matrix, s_modules, row, &col, &run_start, &run_length)) {
       graphics_fill_rect(ctx,
                          GRect(ox + run_start * px, oy + row * px, run_length * px, px),
                          0, GCornerNone);
@@ -194,14 +195,14 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
 
   int32_t modules = 0;
   if (!tuple_int(dict_find(iter, MSG_KEY_MODULES), &modules) ||
-      modules < AZTEC_MIN_MODULES || modules > AZTEC_MAX_MODULES) {
+      modules < CODE_MIN_MODULES || modules > CODE_MAX_MODULES) {
     report("Code size unusable");
     return;
   }
 
   const Tuple *matrix = dict_find(iter, MSG_KEY_MATRIX);
   if (!matrix || matrix->type != TUPLE_BYTE_ARRAY ||
-      matrix->length != aztec_matrix_bytes(modules)) {
+      matrix->length != code_matrix_bytes(modules)) {
     report("Code data damaged");
     return;
   }

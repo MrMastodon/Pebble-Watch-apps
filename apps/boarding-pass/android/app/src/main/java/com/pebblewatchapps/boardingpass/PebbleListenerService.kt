@@ -24,14 +24,23 @@ class PebbleListenerService : BasePebbleListenerService() {
             // Decryption and encoding are off the main thread; the base class
             // runs these callbacks on it.
             val pass = withContext(Dispatchers.IO) {
-                val payload = PassStore(applicationContext).load() ?: return@withContext null
-                try {
-                    AztecEncoder.encode(payload, Bcbp.label(payload) ?: DEFAULT_LABEL)
+                val store = PassStore(applicationContext)
+                val stored = store.load() ?: return@withContext null
+                val encoded = try {
+                    SymbolEncoder.encode(
+                        stored.payload,
+                        stored.format,
+                        Bcbp.label(stored.payload) ?: DEFAULT_LABEL,
+                    )
                 } catch (_: Exception) {
                     // Nothing useful to do from a background push; the user gets
                     // a real error message when they open the phone app.
-                    null
+                    return@withContext null
                 }
+                // Showing a symbology the airline did not issue is the user's
+                // decision, and a background push is not the place to take it.
+                val agreed = store.substitutionAcknowledged || store.alwaysAllowSubstitution
+                if (encoded.isSubstituted && !agreed) null else encoded
             } ?: return@launch
 
             PebbleLink.send(applicationContext, pass)

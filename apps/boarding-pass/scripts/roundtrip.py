@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Round-trips a synthetic boarding pass through the watchapp's drawing code.
 
-Encodes a fake BCBP string as an Aztec symbol, packs the module matrix the way
-the Android app does, renders it through the watchapp's own aztec_matrix.h via
-render_matrix.c, and decodes the result. If the decoded string matches the
-input, then packing, unpacking and drawing all agree.
+Encodes a fake BCBP string, packs the module matrix the way the Android app
+does, renders it through the watchapp's own code_matrix.h via render_matrix.c,
+and decodes the result. If the decoded string matches the input, then packing,
+unpacking and drawing all agree.
+
+Every square symbology the watch can show is checked, since they differ in size
+and the largest of them is what the module ceiling has to accommodate.
 
 This needs no watch, no phone and no Pebble SDK. roundtrip-emulator.sh covers
 the AppMessage and persistence path on top of it.
@@ -24,8 +27,17 @@ import zxingcpp
 
 HERE = pathlib.Path(__file__).resolve().parent
 
-# Symbol sizes the watchapp accepts, mirroring aztec_matrix.h.
-MAX_MODULES = 41
+# Symbol sizes the watchapp accepts, mirroring code_matrix.h.
+MAX_MODULES = 45
+
+# The symbologies the watch can draw. PDF417 is deliberately absent: at 205
+# modules wide it cannot be shown on a 200 px screen at any usable scale, so the
+# phone app re-encodes those as Aztec instead.
+SQUARE_FORMATS = {
+    "aztec": zxingcpp.BarcodeFormat.Aztec,
+    "qr": zxingcpp.BarcodeFormat.QRCode,
+    "datamatrix": zxingcpp.BarcodeFormat.DataMatrix,
+}
 
 
 def synthetic_bcbp() -> str:
@@ -88,9 +100,12 @@ def synthetic_bcbp() -> str:
     return bcbp
 
 
-def encode(text: str) -> np.ndarray:
-    """Returns the Aztec module matrix as a boolean array, True = black."""
-    barcode = zxingcpp.create_barcode(text, zxingcpp.BarcodeFormat.Aztec)
+def encode(text: str, symbology: str) -> np.ndarray:
+    """Returns the module matrix as a boolean array, True = black."""
+    # Data Matrix defaults to a rectangular symbol, which the watch cannot draw;
+    # the Android app forces the square shape the same way.
+    options = {"force_square": True} if symbology == "datamatrix" else {}
+    barcode = zxingcpp.create_barcode(text, SQUARE_FORMATS[symbology], **options)
     image = np.array(zxingcpp.write_barcode_to_image(barcode, scale=1))
     if image.ndim == 3:
         image = image[:, :, 0]
@@ -128,7 +143,11 @@ def render(modules: int, packed: bytes, workdir: pathlib.Path) -> np.ndarray:
 
 
 def decode(image: np.ndarray) -> str | None:
-    result = zxingcpp.read_barcode(image, formats=zxingcpp.BarcodeFormat.Aztec)
+    result = zxingcpp.read_barcode(image, formats=[
+        zxingcpp.BarcodeFormat.Aztec,
+        zxingcpp.BarcodeFormat.QRCode,
+        zxingcpp.BarcodeFormat.DataMatrix,
+    ])
     return result.text if result else None
 
 
@@ -185,6 +204,10 @@ def main() -> int:
              "instead of rendering on the host",
     )
     parser.add_argument(
+        "--symbology", choices=sorted(SQUARE_FORMATS), default=None,
+        help="check only this symbology (default: all of them)",
+    )
+    parser.add_argument(
         "--save-png", type=pathlib.Path,
         help="also write the rendered symbol here, for eyeballing",
     )
@@ -205,7 +228,7 @@ def main() -> int:
         screenshot = np.array(Image.open(args.check).convert("L"))
         decoded = decode(screenshot)
         if decoded is None:
-            print(f"FAIL: no Aztec symbol found in {args.check}")
+            print(f"FAIL: no barcode found in {args.check}")
             return 1
         if decoded != text:
             print("FAIL: the screenshot decodes to a different string")
@@ -215,40 +238,49 @@ def main() -> int:
         print(f"OK: {args.check} decodes back to the original string")
         return 0
 
-    matrix = encode(text)
-    modules = matrix.shape[0]
-    packed = pack(matrix)
-    print(f"encoded {len(text)} characters as {modules}x{modules} modules, "
-          f"{len(packed)} packed bytes")
+    symbologies = [args.symbology] if args.symbology else sorted(SQUARE_FORMATS)
+    failed = False
 
-    if modules > MAX_MODULES:
-        print(f"FAIL: {modules} modules is more than the watch can draw legibly")
+    for symbology in symbologies:
+        matrix = encode(text, symbology)
+        modules = matrix.shape[0]
+        packed = pack(matrix)
+        summary = (f"{symbology:11s} {len(text)} characters -> {modules}x{modules} modules, "
+                   f"{len(packed)} packed bytes")
+
+        if modules > MAX_MODULES:
+            print(f"{summary}\n  FAIL: more than the {MAX_MODULES} modules the watch can hold")
+            failed = True
+            continue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            canvas = render(modules, packed, pathlib.Path(tmp))
+
+        if args.save_png:
+            from PIL import Image
+            Image.fromarray(canvas).save(
+                args.save_png.with_stem(f"{args.save_png.stem}-{symbology}")
+                if len(symbologies) > 1 else args.save_png
+            )
+
+        decoded = decode(canvas)
+        if decoded is None:
+            print(f"{summary}\n  FAIL: the rendered symbol could not be decoded at all")
+            failed = True
+        elif decoded != text:
+            print(f"{summary}\n  FAIL: decoded string differs from the input")
+            failed = True
+        else:
+            print(f"{summary}  OK")
+
+        # The emulator fixture only needs one symbology; Aztec is the smallest.
+        if args.write_js and symbology == "aztec":
+            write_appmessage_js(args.write_js, modules, packed, "SK4174 12A")
+            print(f"wrote {args.write_js}")
+
+    if failed:
         return 1
-
-    with tempfile.TemporaryDirectory() as tmp:
-        canvas = render(modules, packed, pathlib.Path(tmp))
-
-    if args.save_png:
-        from PIL import Image
-        Image.fromarray(canvas).save(args.save_png)
-        print(f"wrote {args.save_png}")
-
-    decoded = decode(canvas)
-    if decoded is None:
-        print("FAIL: the rendered symbol could not be decoded at all")
-        return 1
-    if decoded != text:
-        print("FAIL: decoded string differs from the input")
-        print(f"  in:  {text!r}")
-        print(f"  out: {decoded!r}")
-        return 1
-
-    print("OK: the rendered symbol decodes back to the original string")
-
-    if args.write_js:
-        write_appmessage_js(args.write_js, modules, packed, "SK4174 12A")
-        print(f"wrote {args.write_js}")
-
+    print("OK: every symbology round-trips through the watch's own drawing code")
     return 0
 
 

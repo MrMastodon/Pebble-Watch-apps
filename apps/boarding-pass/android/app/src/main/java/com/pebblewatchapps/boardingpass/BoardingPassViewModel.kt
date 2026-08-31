@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.zxing.BarcodeFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,12 +17,19 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
     data class UiState(
         val label: String? = null,
         val modules: Int = 0,
+        val format: BarcodeFormat? = null,
+        val sourceFormat: BarcodeFormat? = null,
         val busy: Boolean = false,
         val message: String? = null,
         val isError: Boolean = false,
+        /** Set when the watch would show a symbology the airline did not issue. */
+        val substitutionToConfirm: Substitution? = null,
     ) {
         val hasPass: Boolean get() = modules > 0
+        val isSubstituted: Boolean get() = format != null && format != sourceFormat
     }
+
+    data class Substitution(val from: BarcodeFormat, val to: BarcodeFormat)
 
     private val store = PassStore(application)
     private var pass: EncodedPass? = null
@@ -31,10 +39,16 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
 
     init {
         viewModelScope.launch {
-            val stored = withContext(Dispatchers.IO) { store.load() } ?: return@launch
-            val encoded = runCatching { encode(stored) }.getOrNull() ?: return@launch
+            val encoded = withContext(Dispatchers.IO) {
+                store.load()?.let { stored -> runCatching { encode(stored) }.getOrNull() }
+            } ?: return@launch
             pass = encoded
-            _state.value = _state.value.copy(label = encoded.label, modules = encoded.modules)
+            _state.value = _state.value.copy(
+                label = encoded.label,
+                modules = encoded.modules,
+                format = encoded.format,
+                sourceFormat = encoded.sourceFormat,
+            )
         }
     }
 
@@ -48,11 +62,11 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             val encoded = try {
                 withContext(Dispatchers.IO) {
-                    val payload = BarcodeReader.read(getApplication(), uri)
-                    val encoded = encode(payload)
+                    val scanned = BarcodeReader.read(getApplication(), uri)
+                    val encoded = encode(PassStore.StoredPass(scanned.text, scanned.format))
                     // Only keep the payload once it is known to be usable, so a
                     // working pass is never replaced by one the watch cannot draw.
-                    store.save(payload)
+                    store.save(scanned.text, scanned.format)
                     encoded
                 }
             } catch (error: Exception) {
@@ -61,8 +75,13 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
             }
 
             pass = encoded
-            _state.value = _state.value.copy(label = encoded.label, modules = encoded.modules)
-            sendStoredPass()
+            _state.value = _state.value.copy(
+                label = encoded.label,
+                modules = encoded.modules,
+                format = encoded.format,
+                sourceFormat = encoded.sourceFormat,
+            )
+            sendOrAsk()
         }
     }
 
@@ -71,7 +90,30 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
             return
         }
         _state.value = _state.value.copy(busy = true, message = null, isError = false)
-        viewModelScope.launch { sendStoredPass() }
+        viewModelScope.launch { sendOrAsk() }
+    }
+
+    /** The user accepted a symbology the airline did not issue. */
+    fun confirmSubstitution(dontAskAgain: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                store.substitutionAcknowledged = true
+                if (dontAskAgain) {
+                    store.alwaysAllowSubstitution = true
+                }
+            }
+            _state.value = _state.value.copy(substitutionToConfirm = null, busy = true)
+            sendStoredPass()
+        }
+    }
+
+    fun cancelSubstitution() {
+        _state.value = _state.value.copy(
+            substitutionToConfirm = null,
+            busy = false,
+            message = "Not sent. The pass is still saved here if you change your mind.",
+            isError = false,
+        )
     }
 
     fun deletePass() {
@@ -80,6 +122,30 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
             pass = null
             _state.value = UiState(message = "Boarding pass deleted from this phone")
         }
+    }
+
+    /**
+     * Sends the pass, unless the watch would show a symbology the airline did
+     * not issue and the user has not agreed to that yet.
+     */
+    private suspend fun sendOrAsk() {
+        val current = pass
+        if (current == null) {
+            _state.value = _state.value.copy(busy = false)
+            return
+        }
+
+        val agreed = withContext(Dispatchers.IO) {
+            store.substitutionAcknowledged || store.alwaysAllowSubstitution
+        }
+        if (current.isSubstituted && !agreed) {
+            _state.value = _state.value.copy(
+                busy = false,
+                substitutionToConfirm = Substitution(current.sourceFormat, current.format),
+            )
+            return
+        }
+        sendStoredPass()
     }
 
     private suspend fun sendStoredPass() {
@@ -105,18 +171,22 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         )
     }
 
-    private fun encode(payload: String): EncodedPass =
-        AztecEncoder.encode(payload, Bcbp.label(payload) ?: DEFAULT_LABEL)
+    private fun encode(stored: PassStore.StoredPass): EncodedPass = SymbolEncoder.encode(
+        stored.payload,
+        stored.format,
+        Bcbp.label(stored.payload) ?: DEFAULT_LABEL,
+    )
 
     private fun fail(error: Exception) {
         // Never log the payload itself - it carries the booking reference and
         // the frequent flyer number in the clear.
         val message = when (error) {
             is BarcodeReader.NotFoundInImageException ->
-                "No Aztec barcode found in that image. Take the screenshot with the barcode fully visible and unobscured."
+                "No boarding pass barcode found in that image. Take the screenshot with the " +
+                    "barcode fully visible and unobscured."
             is BarcodeReader.UnreadableImageException ->
                 "That image could not be opened."
-            is AztecEncoder.TooLargeException ->
+            is SymbolEncoder.TooLargeException ->
                 "This boarding pass needs ${error.modules} modules, more than the watch can show legibly."
             else -> "Could not read that image: ${error.javaClass.simpleName}"
         }

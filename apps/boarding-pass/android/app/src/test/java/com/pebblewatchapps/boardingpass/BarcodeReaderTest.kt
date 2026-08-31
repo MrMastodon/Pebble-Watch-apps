@@ -3,7 +3,9 @@ package com.pebblewatchapps.boardingpass
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.google.zxing.BarcodeFormat
-import com.google.zxing.aztec.AztecWriter
+import com.google.zxing.EncodeHintType
+import com.google.zxing.MultiFormatWriter
+import com.google.zxing.datamatrix.encoder.SymbolShapeHint
 import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.File
@@ -22,10 +24,11 @@ import org.robolectric.annotation.GraphicsMode
  * real Android graphics stack, so it runs under Robolectric in native graphics
  * mode: BitmapFactory really decodes, and getPixels really reads back.
  *
- * The first version of loadBitmap() failed every single image because the
- * elvis operator bound to the result of `use { }` rather than to
- * openInputStream(), and decodeStream() returns null by contract when
- * inJustDecodeBounds is set. That shipped because nothing exercised this path.
+ * Two bugs shipped from this file being thin. The first rejected every image,
+ * because an elvis operator bound to the result of `use { }` while
+ * decodeStream() returns null by contract under inJustDecodeBounds. The second
+ * found nothing in a real screenshot, because ZXing's Aztec detector searches
+ * outwards from the centre of the image and a boarding pass sits near the top.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -34,54 +37,57 @@ class BarcodeReaderTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
-    @Test
-    fun `reads an aztec code out of a tightly cropped image`() {
-        val file = screenshotContaining(
-            SYNTHETIC_BCBP,
-            name = "tight.png",
-            canvasWidth = 420,
-            canvasHeight = 420,
-            top = 30,
-            scale = 10,
-        )
-
-        val payload = BarcodeReader.read(
-            ApplicationProvider.getApplicationContext(),
-            Uri.fromFile(file),
-        )
-
-        assertEquals(SYNTHETIC_BCBP, payload)
-    }
-
     /**
-     * The shape that actually broke in the field: a full-height phone
-     * screenshot with the code up near the top and a large empty area below it.
-     * ZXing's Aztec detector searches outwards from the middle of the image,
-     * which here is blank, so decoding the image as a whole finds nothing.
+     * The whole point of the search: every symbology IATA allows on a boarding
+     * pass, anywhere on the screen, at any size a phone would show it at.
      */
     @Test
-    fun `reads a code sitting near the top of a full phone screenshot`() {
-        val file = screenshotContaining(
-            SYNTHETIC_BCBP,
-            name = "phone.png",
-            canvasWidth = 1080,
-            canvasHeight = 2340,
-            top = 300,
-            scale = 10,
+    fun `reads every symbology, wherever it sits and whatever size it is`() {
+        val positions = listOf(
+            "top-left" to (0.0 to 0.0),
+            "top-centre" to (0.5 to 0.1),
+            "top-right" to (1.0 to 0.0),
+            "centre" to (0.5 to 0.5),
+            "bottom-left" to (0.0 to 1.0),
+            "bottom-right" to (1.0 to 1.0),
         )
+        val scales = listOf(4, 10)
+        val failures = mutableListOf<String>()
 
-        val payload = BarcodeReader.read(
-            ApplicationProvider.getApplicationContext(),
-            Uri.fromFile(file),
-        )
+        for (format in FORMATS) {
+            for ((positionName, position) in positions) {
+                for (scale in scales) {
+                    val case = "$format at $positionName, scale $scale"
+                    val file = screenshotContaining(
+                        format = format,
+                        name = "${format.name}-$positionName-$scale.png",
+                        fractionX = position.first,
+                        fractionY = position.second,
+                        scale = scale,
+                    )
+                    val scanned = runCatching {
+                        BarcodeReader.read(
+                            ApplicationProvider.getApplicationContext(),
+                            Uri.fromFile(file),
+                        )
+                    }.getOrNull()
 
-        assertEquals(SYNTHETIC_BCBP, payload)
+                    when {
+                        scanned == null -> failures += "$case: not found"
+                        scanned.text != SYNTHETIC_BCBP -> failures += "$case: wrong payload"
+                        scanned.format != format -> failures += "$case: read as ${scanned.format}"
+                    }
+                }
+            }
+        }
+
+        assertEquals("failures:\n" + failures.joinToString("\n"), emptyList<String>(), failures)
     }
 
     @Test
     fun `reports an image with no barcode in it`() {
         val blank = temporaryFolder.newFile("blank.png")
-        val white = BufferedImage(1080, 2340, BufferedImage.TYPE_INT_RGB)
+        val white = BufferedImage(CANVAS_WIDTH, CANVAS_HEIGHT, BufferedImage.TYPE_INT_RGB)
         white.createGraphics().apply {
             paint = Color.WHITE
             fillRect(0, 0, white.width, white.height)
@@ -108,31 +114,51 @@ class BarcodeReaderTest {
         assertTrue("got $error", error is BarcodeReader.UnreadableImageException)
     }
 
-    /**
-     * An Aztec symbol drawn into a canvas of the given size, at the given
-     * offset, with everything else left white - roughly how the code sits in a
-     * screenshot surrounded by app chrome.
-     */
+    /** A symbol drawn into a full-size phone screenshot at the given position. */
     private fun screenshotContaining(
-        payload: String,
+        format: BarcodeFormat,
         name: String,
-        canvasWidth: Int,
-        canvasHeight: Int,
-        top: Int,
+        fractionX: Double,
+        fractionY: Double,
         scale: Int,
     ): File {
-        val matrix = AztecWriter().encode(payload, BarcodeFormat.AZTEC, 0, 0)
-        val left = (canvasWidth - matrix.width * scale) / 2
+        val hints = buildMap<EncodeHintType, Any> {
+            put(EncodeHintType.MARGIN, 0)
+            if (format == BarcodeFormat.DATA_MATRIX) {
+                put(EncodeHintType.DATA_MATRIX_SHAPE, SymbolShapeHint.FORCE_SQUARE)
+            }
+        }
+        val matrix = MultiFormatWriter().encode(SYNTHETIC_BCBP, format, 0, 0, hints)
 
-        val image = BufferedImage(canvasWidth, canvasHeight, BufferedImage.TYPE_INT_RGB)
+        // PDF417 is far wider than it is tall; shrink it to fit across.
+        var moduleWidth = scale.toDouble()
+        var moduleHeight = scale.toDouble()
+        if (matrix.width * moduleWidth > CANVAS_WIDTH - 2 * INSET) {
+            moduleWidth = (CANVAS_WIDTH - 2.0 * INSET) / matrix.width
+            moduleHeight = moduleWidth
+        }
+        val symbolWidth = (matrix.width * moduleWidth).toInt()
+        val symbolHeight = (matrix.height * moduleHeight).toInt()
+
+        val image = BufferedImage(CANVAS_WIDTH, CANVAS_HEIGHT, BufferedImage.TYPE_INT_RGB)
         val graphics = image.createGraphics()
         graphics.paint = Color.WHITE
-        graphics.fillRect(0, 0, canvasWidth, canvasHeight)
+        graphics.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT)
         graphics.paint = Color.BLACK
+
+        // Inset so the symbol is never clipped by the canvas edge: a clipped
+        // finder pattern is genuinely unreadable, by any decoder.
+        val left = INSET + ((CANVAS_WIDTH - symbolWidth - 2 * INSET) * fractionX).toInt()
+        val top = INSET + ((CANVAS_HEIGHT - symbolHeight - 2 * INSET) * fractionY).toInt()
         for (row in 0 until matrix.height) {
             for (column in 0 until matrix.width) {
                 if (matrix.get(column, row)) {
-                    graphics.fillRect(left + column * scale, top + row * scale, scale, scale)
+                    graphics.fillRect(
+                        left + (column * moduleWidth).toInt(),
+                        top + (row * moduleHeight).toInt(),
+                        Math.ceil(moduleWidth).toInt().coerceAtLeast(1),
+                        Math.ceil(moduleHeight).toInt().coerceAtLeast(1),
+                    )
                 }
             }
         }
@@ -144,6 +170,17 @@ class BarcodeReaderTest {
     }
 
     private companion object {
+        val FORMATS = listOf(
+            BarcodeFormat.AZTEC,
+            BarcodeFormat.QR_CODE,
+            BarcodeFormat.DATA_MATRIX,
+            BarcodeFormat.PDF_417,
+        )
+
+        const val CANVAS_WIDTH = 1080
+        const val CANVAS_HEIGHT = 2340
+        const val INSET = 8
+
         // Synthetic, invented values. Real BCBP data must never be committed.
         const val SYNTHETIC_BCBP =
             "M1TESTER/SYNTHETIC    EZZ9XY9 OSLCPHSK 4174 250Y012A0034 147>50B0WW5180BSK 2A117000000000000SK SK 0000000000000000 20KNSYNTHETIC   "

@@ -1,40 +1,66 @@
 # Boarding Pass
 
-Shows an airline boarding pass barcode on a Pebble Time 2 as a scannable Aztec
+Shows an airline boarding pass barcode on a Pebble Time 2 as a scannable 2D
 code, so the gate scanner can read it off your wrist instead of your phone.
 
 It comes in two halves:
 
 | Part | What it does |
 |---|---|
-| [`watchapp/`](watchapp) | Pebble C app for `emery`. Draws a module matrix and nothing else. |
-| [`android/`](android) | Companion app. Decodes the barcode out of a screenshot, re-encodes it, and pushes the matrix to the watch. |
+| [`watchapp/`](watchapp) | Pebble C app for `emery`. Draws a module matrix and nothing else - it never learns which symbology it is showing. |
+| [`android/`](android) | Companion app. Finds and decodes the barcode in a screenshot, re-encodes it, and pushes the matrix to the watch. |
 
 ## How it works
 
 ```
-Airline app shows an Aztec code
+Airline app shows a barcode
       |
       | you screenshot it and share it with the Android app
       v
 Android app
-  1. ZXing decodes the Aztec symbol      -> BCBP string
-  2. ZXing re-encodes the string         -> 37x37 BitMatrix
-  3. packs the matrix                    -> 172 bytes
-  4. PebbleKit 2 sends it in one AppMessage
+  1. finds the symbol in the screenshot  -> a centred candidate region
+  2. ZXing decodes it                    -> BCBP string + symbology
+  3. ZXing re-encodes the string         -> square BitMatrix
+  4. packs the matrix                    -> 172 bytes for a 37x37 Aztec
+  5. PebbleKit 2 sends it in one AppMessage
       |
       v
 Watchapp
   1. stores the matrix in persistent storage
-  2. draws 5x5 px rectangles, one per module
+  2. draws 4x4 or 5x5 px rectangles, one per module
   3. turns the backlight on while the code is up
 ```
 
-All the Aztec work happens on the phone. The watch never encodes a barcode and
-never receives an image - only finished bits, 172 of them for a normal 131
-character boarding pass. That fits in a single AppMessage and a single 256 byte
-persist key, which is what lets the watch draw the pass at startup without the
-phone anywhere nearby.
+All the barcode work happens on the phone. The watch never encodes anything,
+never receives an image, and never learns which symbology it is drawing - it
+gets finished bits, 172 of them for a normal 131 character boarding pass. That
+fits in a single AppMessage and a single 256 byte persist key, which is what
+lets the watch draw the pass at startup without the phone anywhere nearby.
+
+## Symbologies
+
+All four 2D symbologies IATA Resolution 792 allows on a boarding pass are read.
+Three of them are square, so the watch can show them as they were issued:
+
+| Symbology | 131 character pass | On the watch |
+|---|---|---|
+| Aztec | 37x37 | 5 px per module |
+| Data Matrix | 40x40, forced square | 4 px per module |
+| QR | 41x41 | 4 px per module |
+| PDF417 | 205x44 | cannot be drawn |
+
+PDF417 - what most US carriers issue - is 205 modules wide. On a 200 px screen
+that is under one pixel per module, so there is no scale at which it can be
+shown. The app reads it and offers to send the same boarding pass data as Aztec
+instead, but asks first: gate scanners are imaging readers and IATA allows
+either symbology, yet that is not something to discover at a gate. The prompt
+has a "do not ask me again" option.
+
+Everything else keeps the symbology the airline issued, so the gate reader sees
+exactly the symbol it was given. The watch centres the symbol, and the phone
+checks before sending that the white around it is wide enough for that
+symbology's quiet zone - four modules for QR, one for Data Matrix, none for
+Aztec.
 
 The screenshot only has to be taken once per booking. Two screenshots of the
 same pass taken minutes apart decode to the same string, so airlines are not
@@ -48,7 +74,7 @@ The label at the bottom of the screen is built from the flight fields alone.
 
 | AppMessage key | Type | Contents |
 |---|---|---|
-| 1 | uint8 | module count `n` (15..41) |
+| 1 | uint8 | module count `n` (15..45) |
 | 2 | byte array | packed matrix, `ceil(n*n/8)` bytes, row by row, MSB first |
 | 3 | string | short label such as `SK4174 12A` |
 | 4 | uint8 | protocol version, currently 1 |
@@ -114,10 +140,10 @@ pip install zxing-cpp numpy pillow
 scripts/roundtrip.py
 ```
 
-Encodes a synthetic boarding pass, packs it, renders it through the watchapp's
-own `aztec_matrix.h` (the renderer includes that header rather than
-reimplementing it), and decodes the result. If the string that comes out matches
-the one that went in, then packing, unpacking and drawing all agree.
+Encodes a synthetic boarding pass in each square symbology, packs it, renders it
+through the watchapp's own `code_matrix.h` (the renderer includes that header
+rather than reimplementing it), and decodes the result. If the string that comes
+out matches the one that went in, then packing, unpacking and drawing all agree.
 
 ### Round trip on the emulator
 
@@ -142,16 +168,24 @@ and the BCBP label extraction (including that it leaks neither the name nor the
 booking reference).
 
 Reading an image is covered too, under Robolectric in native graphics mode, so
-`BitmapFactory` really decodes and `getPixels` really reads back: the tests draw
-an Aztec symbol into a PNG and assert the string comes back out. One of them
-uses a full 1080x2340 canvas with the code up near the top, which is the layout
-of a real phone screenshot and the one that ZXing does not find on its own.
+`BitmapFactory` really decodes and `getPixels` really reads back. The main test
+draws every symbology into a full 1080x2340 screenshot at six positions and two
+sizes - 48 cases - and asserts each one comes back with the right payload and
+the right symbology.
+
+That test exists because finding the symbol turned out to be most of the work.
+QR and PDF417 are found wherever they sit; Aztec and Data Matrix are not,
+because both detectors search outwards from the centre of the image they are
+given. Measured over the same 108 case matrix: the whole image alone read 64,
+sliding windows read 79, and searching for high-contrast blobs and centring each
+one in its own canvas read all 108 - in less time than the windows took.
 
 All test data is synthetic. Real BCBP strings must never be committed here.
 
 ## Not yet verified
 
-The watchapp compiles and its drawing code passes the host round trip, but it
-has not yet been run on a real watch or in the emulator, and the Android app has
-not been run on a phone. Scanning at an actual gate is the final test and cannot
-be simulated - do a dry run with a barcode scanner app before relying on it.
+The Aztec path has been used end to end, phone to watch. What has not been tried
+is a real gate scanner - that is the final test and cannot be simulated - and
+the QR, Data Matrix and PDF417 paths have only ever been exercised against
+generated images, never against a boarding pass a real airline issued. Do a dry
+run with a barcode scanner app before relying on any of them.
