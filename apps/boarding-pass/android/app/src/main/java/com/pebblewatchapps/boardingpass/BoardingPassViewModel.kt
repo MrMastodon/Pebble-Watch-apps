@@ -128,7 +128,7 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
 
             // The watch keeps its own copy so it works with the phone in a bag,
             // which also means deleting here is not enough on its own.
-            val cleared = PebbleLink.sendClear(getApplication()) == PebbleLink.Outcome.Sent
+            val cleared = PebbleLink.sendClear(getApplication()).isSent
             withContext(Dispatchers.IO) { store.watchDeletePending = !cleared }
 
             _state.value = UiState(
@@ -176,6 +176,8 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         val outcome = PebbleLink.send(getApplication(), current)
         val message = when (outcome) {
             PebbleLink.Outcome.Sent -> "Sent to the watch"
+            PebbleLink.Outcome.SentAfterOpeningWatchapp ->
+                "Opened Boarding Pass on the watch and sent it there"
             PebbleLink.Outcome.NoPebbleApp ->
                 "Could not reach the Pebble app - is it installed and allowed to talk to this app?"
             PebbleLink.Outcome.NoWatchConnected ->
@@ -185,14 +187,14 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
         _state.value = _state.value.copy(
             busy = false,
             message = message,
-            isError = outcome != PebbleLink.Outcome.Sent,
+            isError = !outcome.isSent,
         )
     }
 
     private fun encode(stored: PassStore.StoredPass): EncodedPass = SymbolEncoder.encode(
         stored.payload,
         stored.format,
-        Bcbp.label(stored.payload) ?: DEFAULT_LABEL,
+        Bcbp.label(stored.payload) ?: WatchSync.DEFAULT_LABEL,
     )
 
     private fun fail(error: Exception) {
@@ -209,9 +211,5 @@ class BoardingPassViewModel(application: Application) : AndroidViewModel(applica
             else -> "Could not read that image: ${error.javaClass.simpleName}"
         }
         _state.value = _state.value.copy(busy = false, message = message, isError = true)
-    }
-
-    private companion object {
-        const val DEFAULT_LABEL = "Boarding pass"
     }
 }

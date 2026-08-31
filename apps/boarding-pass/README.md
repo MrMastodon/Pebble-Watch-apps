@@ -89,15 +89,22 @@ The label at the bottom of the screen is built from the flight fields alone.
    **Boarding Pass** from the share sheet. (The in-app picker works too, for a
    screenshot you took earlier.) A plain full-screen screenshot is fine - there
    is no need to crop it down to the barcode.
-4. Open **Boarding Pass** on the watch. The code is drawn immediately from
-   storage; the phone app also pushes the latest copy whenever the watchapp
-   opens, so the watch cannot end up showing a stale pass.
+4. That is it - the phone opens **Boarding Pass** on the watch and sends the
+   code there. Opening it yourself later draws the code straight from the
+   watch's own storage, with no phone needed.
 
-Deleting the pass in the phone app deletes it from the watch too. An AppMessage
-only reaches a watchapp that is open, so if the watch is not showing the app at
-that moment the phone remembers and sends the deletion the next time the
-watchapp opens. Importing a new pass in the meantime cancels the pending
-deletion, since the new pass replaces it anyway.
+Only a watchapp that is in the foreground can receive an AppMessage, and a
+watchface counts as a different app, so the phone opens the watchapp on the
+wrist rather than asking you to. It also pushes the latest copy whenever the
+watchapp opens by any means, so the watch cannot end up showing a pass the phone
+has since replaced.
+
+Deleting the pass in the phone app deletes it from the watch too. That one does
+not open the watchapp on your wrist - popping an app up only to tell it to
+forget something is not worth it - so if the watch is not showing the app the
+phone remembers and sends the deletion the next time the watchapp opens.
+Importing a new pass in the meantime cancels the pending deletion; a stored pass
+always wins over a deletion left over from before it.
 
 On the watch, **select** toggles the backlight. A reflective screen sometimes
 scans better with it off under strong light, so that is a choice rather than
@@ -175,7 +182,10 @@ Covers the bit packing against ZXing's own `BitMatrix`, the symbol size ceiling
 and the quiet zone rule, the BCBP label extraction (including that it leaks
 neither the name nor the booking reference), and what storage keeps and drops -
 a deletion the watch has not heard about has to survive being cleared, while a
-newly imported pass has to cancel it.
+newly imported pass has to cancel it. What the phone pushes when the watchapp
+opens is a separate set of tests, since that is the only moment it can push
+anything and getting the precedence wrong strands the watch showing something
+the phone no longer has.
 
 Reading an image is covered too, under Robolectric in native graphics mode, so
 `BitmapFactory` really decodes and `getPixels` really reads back. The main test

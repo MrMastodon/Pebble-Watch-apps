@@ -8,11 +8,12 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
- * Pushes the stored boarding pass whenever the watchapp is opened.
+ * Catches the watch up whenever the watchapp is opened.
  *
  * The watch keeps its own copy and draws that first, so this is not what makes
- * the app work offline - it is what keeps the watch from ever showing a stale
- * pass after the user has shared a newer screenshot.
+ * the app work offline. It is what keeps the watch from showing a pass the
+ * phone has since replaced or deleted - including when the phone app opened the
+ * watchapp itself in order to send.
  */
 class PebbleListenerService : BasePebbleListenerService() {
 
@@ -22,42 +23,18 @@ class PebbleListenerService : BasePebbleListenerService() {
         }
         coroutineScope.launch {
             val store = PassStore(applicationContext)
-
-            // A pass deleted on the phone while the watch was out of reach is
-            // still on the wrist. This is the first moment it can be told.
-            if (withContext(Dispatchers.IO) { store.watchDeletePending }) {
-                if (PebbleLink.sendClear(applicationContext) == PebbleLink.Outcome.Sent) {
-                    withContext(Dispatchers.IO) { store.watchDeletePending = false }
-                }
-                return@launch
-            }
-
             // Decryption and encoding are off the main thread; the base class
             // runs these callbacks on it.
-            val pass = withContext(Dispatchers.IO) {
-                val stored = store.load() ?: return@withContext null
-                val encoded = try {
-                    SymbolEncoder.encode(
-                        stored.payload,
-                        stored.format,
-                        Bcbp.label(stored.payload) ?: DEFAULT_LABEL,
-                    )
-                } catch (_: Exception) {
-                    // Nothing useful to do from a background push; the user gets
-                    // a real error message when they open the phone app.
-                    return@withContext null
-                }
-                // Showing a symbology the airline did not issue is the user's
-                // decision, and a background push is not the place to take it.
-                val agreed = store.substitutionAcknowledged || store.alwaysAllowSubstitution
-                if (encoded.isSubstituted && !agreed) null else encoded
-            } ?: return@launch
+            when (val action = withContext(Dispatchers.IO) { WatchSync.pendingAction(store) }) {
+                is WatchSync.Action.Send -> PebbleLink.send(applicationContext, action.pass)
 
-            PebbleLink.send(applicationContext, pass)
+                WatchSync.Action.Clear ->
+                    if (PebbleLink.sendClear(applicationContext).isSent) {
+                        withContext(Dispatchers.IO) { store.watchDeletePending = false }
+                    }
+
+                WatchSync.Action.Nothing -> Unit
+            }
         }
-    }
-
-    private companion object {
-        const val DEFAULT_LABEL = "Boarding pass"
     }
 }
