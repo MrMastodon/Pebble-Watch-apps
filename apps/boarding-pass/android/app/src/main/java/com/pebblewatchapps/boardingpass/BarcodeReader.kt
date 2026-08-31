@@ -229,9 +229,7 @@ object BarcodeReader {
 
             val blobWidth = (maxColumn - minColumn + 1) * cell
             val blobHeight = (maxRow - minRow + 1) * cell
-            if (blobWidth >= MIN_BLOB_PIXELS && blobHeight >= MIN_BLOB_PIXELS &&
-                isWorthCentring(blobWidth, blobHeight, width, height)
-            ) {
+            if (blobWidth >= MIN_BLOB_PIXELS && blobHeight >= MIN_BLOB_PIXELS) {
                 blobs.add(Blob(minColumn * cell, minRow * cell, blobWidth, blobHeight, count))
             }
         }
@@ -239,61 +237,50 @@ object BarcodeReader {
         return blobs.sortedByDescending { it.cells }.take(MAX_CANDIDATES)
     }
 
-    /**
-     * Whether a blob is worth copying out at all.
-     *
-     * A photo of a screen, or any busy image, has detail everywhere and comes
-     * back as one blob spanning the lot. Centring that gains nothing - the whole
-     * image is already the first thing tried - and the padded canvas it would
-     * need is enormous: for a 1080x2340 image, 3270x3270 pixels, 43 MB in one
-     * allocation, on top of the bitmap. An OutOfMemoryError is an Error rather
-     * than an Exception, so that took the app down rather than failing the
-     * import.
-     */
-    private fun isWorthCentring(
-        blobWidth: Int,
-        blobHeight: Int,
-        sourceWidth: Int,
-        sourceHeight: Int,
-    ): Boolean {
-        if (blobWidth * SPANS_SOURCE_PERCENT >= sourceWidth * 100 &&
-            blobHeight * SPANS_SOURCE_PERCENT >= sourceHeight * 100
-        ) {
-            return false
-        }
-        val side = paddedSide(blobWidth, blobHeight)
-        return side.toLong() * side <= MAX_CANDIDATE_PIXELS
-    }
-
     private fun paddedSide(blobWidth: Int, blobHeight: Int): Int =
         (maxOf(blobWidth, blobHeight) * PADDING).toInt().coerceAtLeast(1)
 
     /**
-     * The blob copied into the middle of a larger white square.
+     * The blob copied into the middle of a white square, shrunk if it is big.
      *
      * Cropping and clamping to the image edge would leave a blob near the border
      * off-centre, which is precisely what the Aztec and Data Matrix detectors
      * cannot cope with. Padding cannot go wrong that way, and the white border
      * doubles as the quiet zone those symbologies want.
+     *
+     * A blob spanning most of a tall screenshot would need a canvas of 3270
+     * square - 43 MB in one allocation, which is how this once crashed the app.
+     * Rather than drop those candidates, which loses the boarding passes whose
+     * barcode shares a tall card with text and a logo, the canvas is capped and
+     * the blob scaled into it. There is room to spare: a 37 module Aztec in a
+     * 2000 pixel canvas is still some 50 pixels per module.
      */
     private fun centred(source: LuminanceSource, blob: Blob): LuminanceSource {
         val width = source.width
         val height = source.height
         val luminance = source.matrix
 
-        val side = paddedSide(blob.width, blob.height)
+        val side = minOf(paddedSide(blob.width, blob.height), MAX_CANDIDATE_SIDE)
         val pixels = IntArray(side * side)
         pixels.fill(WHITE)
 
-        val offsetX = (side - blob.width) / 2
-        val offsetY = (side - blob.height) / 2
-        for (y in 0 until blob.height) {
-            val sourceY = blob.top + y
+        // How much of the canvas the blob itself takes up, keeping its shape.
+        val scale = minOf(
+            side.toDouble() / (blob.width * PADDING),
+            side.toDouble() / (blob.height * PADDING),
+        ).coerceAtMost(1.0)
+        val targetWidth = (blob.width * scale).toInt().coerceIn(1, side)
+        val targetHeight = (blob.height * scale).toInt().coerceIn(1, side)
+
+        val offsetX = (side - targetWidth) / 2
+        val offsetY = (side - targetHeight) / 2
+        for (y in 0 until targetHeight) {
+            val sourceY = blob.top + y * blob.height / targetHeight
             if (sourceY < 0 || sourceY >= height) continue
             val sourceRow = sourceY * width
             val targetRow = (offsetY + y) * side + offsetX
-            for (x in 0 until blob.width) {
-                val sourceX = blob.left + x
+            for (x in 0 until targetWidth) {
+                val sourceX = blob.left + x * blob.width / targetWidth
                 if (sourceX < 0 || sourceX >= width) continue
                 val value = luminance[sourceRow + sourceX].toInt() and 0xFF
                 pixels[targetRow + x] = WHITE_ALPHA or (value shl 16) or (value shl 8) or value
@@ -315,11 +302,9 @@ object BarcodeReader {
     /** How much white to leave around a blob, as a multiple of its longer side. */
     private const val PADDING = 1.4f
 
-    /** A blob at least this much of the source in both directions is the source. */
-    private const val SPANS_SOURCE_PERCENT = 90
-
-    /** Ceiling on a padded candidate, matching the cap on the image itself. */
+    /** Ceiling on a candidate canvas, matching the cap on the image itself. */
     internal const val MAX_CANDIDATE_PIXELS = 4_000_000L
+    internal const val MAX_CANDIDATE_SIDE = 2000
 
     private const val WHITE_ALPHA = 0xFF000000.toInt()
     private const val WHITE = 0xFFFFFFFF.toInt()

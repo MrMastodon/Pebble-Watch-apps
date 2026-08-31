@@ -42,11 +42,31 @@ class SearchRegionsTest {
         assertTrue(first === source)
     }
 
+    /**
+     * A barcode sharing a tall card with text and a logo comes back as one tall
+     * blob. Capping the canvas used to drop those candidates outright, which
+     * lost exactly the boarding passes that need centring most.
+     */
+    @Test
+    fun `a blob too tall for the canvas is scaled in, not dropped`() {
+        val source = markAt(1080, 2340, left = 40, top = 200, markWidth = 1000, markHeight = 1800)
+
+        val regions = BarcodeReader.searchRegions(source).toList()
+
+        assertTrue("the oversized blob was dropped", regions.size > 1)
+        for (region in regions.drop(1)) {
+            assertTrue(
+                "candidate ${region.width}x${region.height} is over budget",
+                region.width.toLong() * region.height <= BarcodeReader.MAX_CANDIDATE_PIXELS,
+            )
+        }
+    }
+
     @Test
     fun `a localised mark still gets a candidate of its own`() {
         // What a boarding pass screenshot looks like: one busy patch, the rest
         // blank. This must keep producing a centred candidate.
-        val source = markAt(1080, 2340, left = 340, top = 300, size = 400)
+        val source = markAt(1080, 2340, left = 340, top = 300, markWidth = 400, markHeight = 400)
 
         val regions = BarcodeReader.searchRegions(source).toList()
 
@@ -67,10 +87,17 @@ class SearchRegionsTest {
         return RGBLuminanceSource(width, height, pixels)
     }
 
-    private fun markAt(width: Int, height: Int, left: Int, top: Int, size: Int): RGBLuminanceSource {
+    private fun markAt(
+        width: Int,
+        height: Int,
+        left: Int,
+        top: Int,
+        markWidth: Int,
+        markHeight: Int,
+    ): RGBLuminanceSource {
         val pixels = IntArray(width * height) { 0xFFFFFFFF.toInt() }
-        for (y in top until top + size) {
-            for (x in left until left + size) {
+        for (y in top until top + markHeight) {
+            for (x in left until left + markWidth) {
                 // A checkerboard: high local contrast, like a barcode.
                 if ((x / 4 + y / 4) % 2 == 0) {
                     pixels[y * width + x] = 0xFF000000.toInt()
