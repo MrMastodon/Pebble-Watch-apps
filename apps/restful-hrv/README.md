@@ -209,3 +209,26 @@ Note what the emulator cannot reproduce:
   does not appear to run the app's JavaScript or surface its `console.log`, so
   the settings page can only be exercised for real against a phone. The page
   itself can be opened directly in a browser with a hand-made fragment.
+
+## When the settings page will not open
+
+Tapping the gear icon starts `src/pkjs/index.js` and then waits for it to call
+`Pebble.openURL()`. If that call is never reached the phone sits on *Loading
+watch app* indefinitely, with nothing on screen to say why. The
+`showConfiguration` handler is therefore registered before anything else that
+could throw, and always opens the page even if building the URL fails - an
+empty page beats a spinner that never resolves.
+
+To see how far it gets, watch the JavaScript console on a real phone:
+
+```sh
+pebble logs --phone <ip>
+```
+
+The script announces each step, prefixed `Restful HRV:`. Seeing `script loaded`
+but never `opening settings with N measurements` means the handler is not being
+called at all, rather than failing inside.
+
+To rule out the page and the network entirely, open the configuration URL
+directly in the phone's browser. If that works, the problem is on the Pebble
+side; if it does not, the page is not reachable from that phone.
