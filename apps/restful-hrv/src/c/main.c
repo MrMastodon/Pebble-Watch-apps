@@ -1,14 +1,16 @@
 #include <pebble.h>
+#include <string.h>
 
 #include "../common/hrv_common.h"
 
-// The entire user interface for Restful HRV: one screen, one switch. All the
-// actual work happens in the background worker (worker_src/c/worker.c), which
-// runs whether or not this app is open. There is deliberately nothing here for
-// browsing past measurements - those are logged straight to the phone, and a
-// second copy on the watch would only be a second thing that can disagree.
+// The user interface for Restful HRV. All the measuring happens in the
+// background worker (worker_src/c/worker.c), which runs whether or not this app
+// is open; this side is a switch, a list of what has been measured, and the
+// bridge that hands that list to the phone.
+//
+// Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.0"
+#define APP_VERSION "1.1"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -17,6 +19,20 @@
 #define WORKER_POLL_INTERVAL_MS 500
 #define WORKER_POLL_ATTEMPTS 8
 
+// The history is sent to the phone as one byte array, so the outbox has to fit
+// the whole thing plus dictionary overhead in a single message.
+#define OUTBOX_SIZE (HRV_HISTORY_BYTES + 64)
+#define INBOX_SIZE 64
+
+// One retry, because the usual reason a send fails is that the phone connection
+// was not up yet when the app launched.
+#define SEND_RETRY_DELAY_MS 3000
+
+// A send attempted this long after launch, independent of the phone announcing
+// itself. Reopening the app usually finds PebbleKit JS already loaded, and this
+// covers the case where its announcement never arrives.
+#define INITIAL_SEND_DELAY_MS 2000
+
 static Window *s_window;
 static TextLayer *s_title_layer;
 static TextLayer *s_state_layer;
@@ -24,12 +40,22 @@ static TextLayer *s_worker_layer;
 static TextLayer *s_hint_layer;
 static TextLayer *s_version_layer;
 
+static Window *s_history_window;
+static MenuLayer *s_history_menu;
+static TextLayer *s_history_empty_layer;
+
 static bool s_enabled;
 
 static AppTimer *s_worker_poll_timer;
 static int s_worker_polls_left;
+static AppTimer *s_send_retry_timer;
+static AppTimer *s_initial_send_timer;
+static bool s_send_retried;
 
 static char s_worker_text[32];
+
+static HrvRecord s_history[HRV_HISTORY_CAPACITY];
+static int s_history_count;
 
 static bool prv_read_enabled(void) {
   if (!persist_exists(PERSIST_KEY_HRV_ENABLED)) {
@@ -37,6 +63,189 @@ static bool prv_read_enabled(void) {
   }
   return persist_read_bool(PERSIST_KEY_HRV_ENABLED);
 }
+
+// Reads the worker's history into s_history. Kept newest-last in storage, which
+// is the order the list wants reversed, so the menu indexes it backwards.
+static void prv_load_history(void) {
+  s_history_count = 0;
+
+  int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
+      ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
+  if (count <= 0 || count > HRV_HISTORY_CAPACITY) {
+    return;
+  }
+
+  int read = persist_read_data(PERSIST_KEY_HISTORY, s_history, sizeof(s_history));
+  if (read < (int)(count * sizeof(HrvRecord))) {
+    // The count and the array disagree; trust the bytes that are actually there.
+    count = (read > 0) ? (read / (int)sizeof(HrvRecord)) : 0;
+  }
+  s_history_count = count;
+}
+
+// ---------------------------------------------------------------- phone bridge
+
+// Hands the whole history to PebbleKit JS, which caches it so the settings page
+// can show it later. The worker cannot do this itself - background workers have
+// no AppMessage - so the data only reaches the phone while this app is open.
+static void prv_send_history_to_phone(void) {
+  if (s_history_count == 0) {
+    return;
+  }
+
+  DictionaryIterator *iter;
+  AppMessageResult begin = app_message_outbox_begin(&iter);
+  if (begin != APP_MSG_OK) {
+    // Usually APP_MSG_BUSY from the two send triggers racing each other, which
+    // is harmless - whichever one won is carrying the same data.
+    APP_LOG(APP_LOG_LEVEL_INFO, "History send skipped, AppMessageResult %d", (int)begin);
+    return;
+  }
+  dict_write_data(iter, MESSAGE_KEY_HrvHistory, (const uint8_t *)s_history,
+                  s_history_count * sizeof(HrvRecord));
+  app_message_outbox_send();
+}
+
+static void prv_send_retry(void *data) {
+  s_send_retry_timer = NULL;
+  prv_send_history_to_phone();
+}
+
+// Belt and braces alongside the phone's announcement: two independent triggers
+// for the same transfer, because the only thing worse than sending twice is a
+// settings page that is silently always empty.
+static void prv_initial_send(void *data) {
+  s_initial_send_timer = NULL;
+  prv_send_history_to_phone();
+}
+
+// PebbleKit JS starts when this app starts, so at launch it is usually not
+// listening yet and an immediate send is simply lost. It announces itself
+// instead, and that is what triggers the transfer.
+static void prv_inbox_received_handler(DictionaryIterator *iter, void *context) {
+  if (dict_find(iter, MESSAGE_KEY_PhoneReady)) {
+    s_send_retried = false;
+    prv_send_history_to_phone();
+  }
+}
+
+static void prv_outbox_sent_handler(DictionaryIterator *iter, void *context) {
+  // The only confirmation there is that the phone got the history. Without it,
+  // "the settings page is empty" has no way of being told apart from "the
+  // watch never managed to send anything".
+  APP_LOG(APP_LOG_LEVEL_INFO, "History sent to phone: %d measurements", s_history_count);
+}
+
+static void prv_outbox_failed_handler(DictionaryIterator *iter, AppMessageResult reason,
+                                      void *context) {
+  APP_LOG(APP_LOG_LEVEL_ERROR, "History send failed, AppMessageResult %d", (int)reason);
+
+  // Almost always "the phone was not connected yet at launch", so one retry a
+  // few seconds later is worth it. Beyond that, the next time the app is opened
+  // will do - there is nothing time-critical here.
+  if (s_send_retried || s_send_retry_timer) {
+    return;
+  }
+  s_send_retried = true;
+  s_send_retry_timer = app_timer_register(SEND_RETRY_DELAY_MS, prv_send_retry, NULL);
+}
+
+// ------------------------------------------------------------- history screen
+
+static uint16_t prv_menu_get_num_rows(MenuLayer *menu_layer, uint16_t section_index,
+                                      void *data) {
+  return s_history_count;
+}
+
+static int16_t prv_menu_get_header_height(MenuLayer *menu_layer, uint16_t section_index,
+                                          void *data) {
+  return MENU_CELL_BASIC_HEADER_HEIGHT;
+}
+
+static void prv_menu_draw_header(GContext *ctx, const Layer *cell_layer,
+                                 uint16_t section_index, void *data) {
+  static char header[24];
+  snprintf(header, sizeof(header), "Last %d measurements", s_history_count);
+  menu_cell_basic_header_draw(ctx, cell_layer, header);
+}
+
+static void prv_menu_draw_row(GContext *ctx, const Layer *cell_layer,
+                              MenuIndex *cell_index, void *data) {
+  // Newest first: storage keeps the newest last, the list shows it at the top.
+  int index = s_history_count - 1 - cell_index->row;
+  if (index < 0 || index >= s_history_count) {
+    return;
+  }
+  const HrvRecord *record = &s_history[index];
+
+  static char title[24];
+  static char subtitle[32];
+
+  snprintf(title, sizeof(title), "%u ms", (unsigned)record->rmssd_ms);
+
+  time_t when = (time_t)record->timestamp;
+  struct tm *local = localtime(&when);
+  // Follows the watch's own 12/24-hour setting, like the rest of this repo's apps.
+  strftime(subtitle, sizeof(subtitle),
+           clock_is_24h_style() ? "%a %d %b, %H:%M" : "%a %d %b, %I:%M %p", local);
+
+  menu_cell_basic_draw(ctx, cell_layer, title, subtitle, NULL);
+}
+
+static void prv_history_window_load(Window *window) {
+  Layer *root_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(root_layer);
+
+  if (s_history_count == 0) {
+    s_history_empty_layer = text_layer_create(GRect(8, 50, bounds.size.w - 16, 100));
+    text_layer_set_text(s_history_empty_layer,
+                        "Nothing measured yet.\n\nA measurement is taken when the watch "
+                        "detects restful sleep.");
+    text_layer_set_font(s_history_empty_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+    text_layer_set_text_alignment(s_history_empty_layer, GTextAlignmentCenter);
+    text_layer_set_background_color(s_history_empty_layer, GColorClear);
+    layer_add_child(root_layer, text_layer_get_layer(s_history_empty_layer));
+    return;
+  }
+
+  s_history_menu = menu_layer_create(bounds);
+  menu_layer_set_callbacks(s_history_menu, NULL, (MenuLayerCallbacks) {
+    .get_num_rows = prv_menu_get_num_rows,
+    .get_header_height = prv_menu_get_header_height,
+    .draw_header = prv_menu_draw_header,
+    .draw_row = prv_menu_draw_row,
+  });
+  menu_layer_set_click_config_onto_window(s_history_menu, window);
+  layer_add_child(root_layer, menu_layer_get_layer(s_history_menu));
+}
+
+static void prv_history_window_unload(Window *window) {
+  if (s_history_menu) {
+    menu_layer_destroy(s_history_menu);
+    s_history_menu = NULL;
+  }
+  if (s_history_empty_layer) {
+    text_layer_destroy(s_history_empty_layer);
+    s_history_empty_layer = NULL;
+  }
+  window_destroy(s_history_window);
+  s_history_window = NULL;
+}
+
+static void prv_show_history(void) {
+  // Re-read on every open: the worker may have added a measurement while this
+  // app sat on the switch screen.
+  prv_load_history();
+
+  s_history_window = window_create();
+  window_set_window_handlers(s_history_window, (WindowHandlers) {
+    .load = prv_history_window_load,
+    .unload = prv_history_window_unload,
+  });
+  window_stack_push(s_history_window, true);
+}
+
+// --------------------------------------------------------------- switch screen
 
 static void prv_update_display(void) {
   text_layer_set_text(s_state_layer, s_enabled ? "ON" : "OFF");
@@ -54,8 +263,8 @@ static void prv_update_display(void) {
   text_layer_set_text(s_worker_layer, s_worker_text);
 
   text_layer_set_text(s_hint_layer, s_enabled
-      ? "Measures HRV during restful sleep. SELECT to turn off."
-      : "No measurements will be taken. SELECT to turn on.");
+      ? "SELECT to turn off\nDOWN for history"
+      : "SELECT to turn on\nDOWN for history");
 }
 
 static void prv_poll_worker_state(void *data) {
@@ -97,8 +306,13 @@ static void prv_select_click_handler(ClickRecognizerRef recognizer, void *contex
   vibes_short_pulse();
 }
 
+static void prv_down_click_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_show_history();
+}
+
 static void prv_click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click_handler);
+  window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_click_handler);
 }
 
 static void prv_window_load(Window *window) {
@@ -124,7 +338,7 @@ static void prv_window_load(Window *window) {
   text_layer_set_background_color(s_worker_layer, GColorClear);
   layer_add_child(root_layer, text_layer_get_layer(s_worker_layer));
 
-  s_hint_layer = text_layer_create(GRect(6, 120, bounds.size.w - 12, bounds.size.h - 140));
+  s_hint_layer = text_layer_create(GRect(6, 126, bounds.size.w - 12, bounds.size.h - 148));
   text_layer_set_font(s_hint_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
   text_layer_set_text_alignment(s_hint_layer, GTextAlignmentCenter);
   text_layer_set_background_color(s_hint_layer, GColorClear);
@@ -151,6 +365,12 @@ static void prv_window_unload(Window *window) {
 
 static void prv_init(void) {
   s_enabled = prv_read_enabled();
+  prv_load_history();
+
+  app_message_register_inbox_received(prv_inbox_received_handler);
+  app_message_register_outbox_sent(prv_outbox_sent_handler);
+  app_message_register_outbox_failed(prv_outbox_failed_handler);
+  app_message_open(INBOX_SIZE, OUTBOX_SIZE);
 
   s_window = window_create();
   window_set_click_config_provider(s_window, prv_click_config_provider);
@@ -163,12 +383,25 @@ static void prv_init(void) {
   // Opening the app is also what installs the worker after a fresh install, and
   // what recovers it if another app's worker displaced ours.
   prv_apply_worker_state();
+
+  // The history reaches the phone either when PebbleKit JS announces itself, or
+  // from this timer if it never does. Opening this app is the only moment that
+  // can happen at all, since the worker has no way to talk to the phone.
+  s_initial_send_timer = app_timer_register(INITIAL_SEND_DELAY_MS, prv_initial_send, NULL);
 }
 
 static void prv_deinit(void) {
   if (s_worker_poll_timer) {
     app_timer_cancel(s_worker_poll_timer);
     s_worker_poll_timer = NULL;
+  }
+  if (s_send_retry_timer) {
+    app_timer_cancel(s_send_retry_timer);
+    s_send_retry_timer = NULL;
+  }
+  if (s_initial_send_timer) {
+    app_timer_cancel(s_initial_send_timer);
+    s_initial_send_timer = NULL;
   }
   window_destroy(s_window);
 }

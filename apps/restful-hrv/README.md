@@ -9,8 +9,8 @@ The measurement is deliberately identical every time — same duration, same
 sampling rate, always taken at the start of an episode — because an HRV reading
 is only useful when it can be compared against the ones before it.
 
-The app itself does almost nothing: it is a single on/off switch. All the work
-happens in a background worker that keeps running with the app closed.
+The app itself is a switch and a list. All the measuring happens in a background
+worker that keeps running with the app closed.
 
 ## Using it
 
@@ -22,22 +22,34 @@ happens in a background worker that keeps running with the app closed.
 
     Background: running
 
-   Measures HRV during
-   restful sleep.
-   SELECT to turn off.
+   SELECT to turn off
+   DOWN for history
 
-           v1.0
+           v1.1
 ```
 
 - **SELECT** — turn measuring on or off. The setting is remembered across
   reboots and reinstalls.
+- **DOWN** — the measurement history, newest first.
 - **Background** — whether the worker is actually running. Turning measuring on
   launches it; turning measuring off stops it, so it isn't holding the watch's
   single background-app slot for nothing.
 
-There is no history screen. Results go straight to the phone via DataLogging,
-and a second copy on the watch would only be a second thing that can disagree
-with the first.
+The history screen lists what has been measured, newest at the top:
+
+```
+   Last 15 measurements
+  ──────────────────────
+   61 ms
+   Tue 15 Sep, 03:12
+  ──────────────────────
+   54 ms
+   Tue 15 Sep, 01:40
+  ──────────────────────
+```
+
+The watch keeps the last 40 measurements — roughly a fortnight at two or three
+restful sleep episodes a night. Times follow the watch's own 12/24-hour setting.
 
 The first time you turn it on, the watch may ask whether this app's background
 worker may replace whichever one is currently installed — Pebble allows only one
@@ -67,10 +79,29 @@ If restful sleep ends before the 120 seconds are up, the measurement stops
 immediately and whatever was collected is logged, as long as it cleared that
 floor of 10.
 
-## Getting the data off the watch
+## Seeing it on the phone
 
-Each completed measurement is one record of two 4-byte little-endian unsigned
-integers, appended to a DataLogging session:
+Open the app's settings from the Pebble mobile app (the gear icon next to
+Restful HRV) and you get the stored measurements as a table and a chart, with
+buttons to copy or download them as CSV.
+
+Two things are worth knowing about how that works:
+
+**The measurements only reach the phone while the watchapp is open.** Pebble
+background workers have no AppMessage, so the worker cannot talk to the phone at
+all. The watchapp pushes its whole history when you open it, and the settings
+page shows the most recent push — it tells you how long ago that was. Open the
+app on the watch to refresh it.
+
+**Nothing is uploaded anywhere.** The settings page is a static file with no
+backend, and the measurements travel to it in the URL fragment, which browsers
+never send to the server. The page makes no network requests of its own. Its
+source is in [`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
+
+## Getting the raw data
+
+Alongside the on-watch history, each completed measurement is appended to a
+DataLogging session as one record of two 4-byte little-endian unsigned integers:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -78,17 +109,16 @@ integers, appended to a DataLogging session:
 | 4 | 4 | RMSSD in whole milliseconds |
 
 The session is tagged `0x48525631` (ASCII `HRV1`), with `DATA_LOGGING_UINT` and
-an item length of 4. Records are sent to the phone whenever it's in range, and
-buffered on the watch until then.
+an item length of 4. Unlike the on-watch history, this is not capped at 40
+records.
 
-To read them with the SDK tool:
+DataLogging data **cannot be read by PebbleKit JS** — only by a native companion
+app built with PebbleKit Android or iOS, or over the Developer Connection:
 
 ```sh
 pebble data-logging list --phone <ip>
 pebble data-logging download hrv.bin --session-id <id> --phone <ip>
 ```
-
-Then decode pairs of `uint32` little-endian values, e.g.:
 
 ```python
 import struct, datetime
@@ -96,6 +126,19 @@ data = open("hrv.bin", "rb").read()
 for ts, rmssd in struct.iter_unpack("<II", data):
     print(datetime.datetime.fromtimestamp(ts), rmssd, "ms")
 ```
+
+For everyday use the settings page above is the easier route; this one exists
+for anyone who wants every measurement ever taken rather than the last 40.
+
+## Hosting the settings page
+
+The page is served from `docs/restful-hrv/` via GitHub Pages, which has to be
+enabled once for this repository (Settings → Pages → Source: `main` branch,
+`/docs` folder). The URL is set in `CONFIG_URL` at the top of
+`src/pkjs/index.js`; change it there if the page moves.
+
+Being a static file with no backend, it can be hosted anywhere, including
+opened straight from disk for development.
 
 ## Requirements
 
@@ -115,7 +158,7 @@ switched off, the worker isn't running at all.
 
 ## How it works
 
-Two binaries:
+Three pieces:
 
 - `worker_src/c/worker.c` — the background worker. Subscribes to
   `HealthService` events and, as a fallback, polls
@@ -124,16 +167,29 @@ Two binaries:
   or end minutes before the worker noticed. On the transition into restful sleep
   it requests an HRV sample period, collects
   `health_service_peek_hrv_ppi_ms()` readings for 120 seconds, computes RMSSD,
-  logs it, and releases the sample period.
-- `src/c/main.c` — the switch. Writes the setting to persistent storage and
-  launches or kills the worker to match.
+  writes it to both the on-watch history and DataLogging, and releases the
+  sample period.
+- `src/c/main.c` — the switch and the history list. Writes the setting to
+  persistent storage, launches or kills the worker to match, and hands the
+  history to PebbleKit JS.
+- `src/pkjs/index.js` + `docs/restful-hrv/index.html` — the phone side. The JS
+  caches whatever the watch sends and passes it to the settings page in the URL
+  fragment.
 
-The two share `src/common/hrv_common.h` so the persistent-storage key can't
-drift between them — if it did, the switch would silently stop reaching the
-worker.
+`src/c/main.c` and `worker_src/c/worker.c` share `src/common/hrv_common.h` so
+the persistent-storage keys and the record layout can't drift between them — if
+they did, the switch would silently stop reaching the worker and the history
+would decode as nonsense.
 
-The sample period is released on every path out of a measurement, including
-worker shutdown, so the sensor is never left running at the elevated rate.
+The history is written before the DataLogging call, so a full DataLogging
+session never costs you the number itself. The HRV sample period is released on
+every path out of a measurement, including worker shutdown, so the sensor is
+never left running at the elevated rate.
+
+The watch sends its history on two independent triggers: when PebbleKit JS
+announces itself, and from a timer a couple of seconds after launch. Either one
+alone would usually work; both together mean a settings page that is silently
+always empty needs two things to fail rather than one.
 
 ## Building
 
@@ -143,7 +199,13 @@ pebble build
 pebble install --emulator emery     # or --phone <ip>
 ```
 
-Note that the emulator can't reproduce the real trigger: `pebble emu-sleep` sets
-the sleep *metrics* but not the `HealthActivityRestfulSleep` activity bit, and
-there is no way to inject peak-to-peak intervals. Emulator testing of the
-measurement path needs a scratch build with those two sensor reads stubbed out.
+Note what the emulator cannot reproduce:
+
+- **The trigger.** `pebble emu-sleep` sets the sleep *metrics* but not the
+  `HealthActivityRestfulSleep` activity bit, and there is no way to inject
+  peak-to-peak intervals. Testing the measurement path there needs a scratch
+  build with those two sensor reads stubbed out.
+- **PebbleKit JS.** The emulator's phone simulator acknowledges AppMessages but
+  does not appear to run the app's JavaScript or surface its `console.log`, so
+  the settings page can only be exercised for real against a phone. The page
+  itself can be opened directly in a browser with a hand-made fragment.

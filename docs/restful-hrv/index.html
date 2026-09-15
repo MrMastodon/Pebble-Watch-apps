@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Restful HRV</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #14171c;
+    --muted: #69707d;
+    --line: #e2e5ea;
+    --accent: #1f6fd0;
+    --accent-soft: #e8f0fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --card: #1c2027;
+      --ink: #eef1f5;
+      --muted: #949cab;
+      --line: #2c323b;
+      --accent: #55aaff;
+      --accent-soft: #1d2a3a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px 16px 48px;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .stats { display: flex; gap: 10px; margin-bottom: 16px; }
+  .stat { flex: 1; background: var(--card); border: 1px solid var(--line);
+          border-radius: 12px; padding: 12px; text-align: center; }
+  .stat .v { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+  .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase;
+             letter-spacing: 0.06em; margin-top: 2px; }
+  svg { display: block; width: 100%; height: 140px; overflow: visible; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;
+       text-transform: uppercase; letter-spacing: 0.06em; padding: 0 0 8px; }
+  th:last-child, td:last-child { text-align: right; }
+  td { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  td.rmssd { font-weight: 600; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+  button, a.btn {
+    flex: 1 1 140px;
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink);
+    font: inherit;
+    font-size: 15px;
+    font-weight: 550;
+    padding: 12px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:active, a.btn:active { opacity: 0.7; }
+  .note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
+  .empty { text-align: center; color: var(--muted); padding: 28px 8px; }
+  .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Restful HRV</h1>
+  <p class="sub" id="sub">Measurements taken during restful sleep.</p>
+  <div id="content"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // The watch's history arrives in the URL fragment rather than the query
+  // string: fragments are never sent to the server, so these numbers never
+  // leave the phone. This page has no backend and makes no network requests.
+  var RECORD_BYTES = 6;
+
+  function parseHash() {
+    var out = {};
+    var hash = (location.hash || '').replace(/^#/, '');
+    hash.split('&').forEach(function (pair) {
+      if (!pair) return;
+      var i = pair.indexOf('=');
+      if (i < 0) return;
+      out[pair.slice(0, i)] = pair.slice(i + 1);
+    });
+    return out;
+  }
+
+  function fromBase64Url(str) {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    var bytes = [], bits = 0, acc = 0;
+    for (var i = 0; i < str.length; i++) {
+      var v = chars.indexOf(str.charAt(i));
+      if (v < 0) continue;
+      acc = (acc << 6) | v;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes.push((acc >> bits) & 0xff);
+      }
+    }
+    return bytes;
+  }
+
+  function decodeRecords(bytes) {
+    var records = [];
+    for (var i = 0; i + RECORD_BYTES <= bytes.length; i += RECORD_BYTES) {
+      // Same signed-integer trap as on the watch side: the top byte is added,
+      // not OR-ed, so timestamps past 2038 stay positive.
+      var ts = ((bytes[i]) | (bytes[i + 1] << 8) | (bytes[i + 2] << 16)) >>> 0;
+      ts += bytes[i + 3] * 0x1000000;
+      records.push({ t: ts, v: bytes[i + 4] | (bytes[i + 5] << 8) });
+    }
+    return records;
+  }
+
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+  function fmtDateTime(ts) {
+    var d = new Date(ts * 1000);
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) +
+           ', ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function fmtAgo(ts) {
+    if (!ts) return 'never';
+    var secs = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    if (secs < 90) return 'just now';
+    if (secs < 5400) return Math.round(secs / 60) + ' min ago';
+    if (secs < 172800) return Math.round(secs / 3600) + ' h ago';
+    return Math.round(secs / 86400) + ' days ago';
+  }
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function buildChart(records, width) {
+    // Oldest to newest, left to right.
+    var pts = records.slice().sort(function (a, b) { return a.t - b.t; });
+    // Drawn at the real pixel width rather than a fixed viewBox stretched to
+    // fit: a non-uniform stretch turns the data points into ellipses.
+    var W = Math.max(200, Math.round(width)), H = 140, padX = 8, padY = 14;
+    var values = pts.map(function (p) { return p.v; });
+    var lo = Math.min.apply(null, values);
+    var hi = Math.max.apply(null, values);
+    // A flat series would divide by zero and draw off the top of the box.
+    if (hi === lo) { hi = lo + 1; }
+
+    var x = function (i) {
+      return pts.length === 1 ? W / 2
+           : padX + (i * (W - 2 * padX)) / (pts.length - 1);
+    };
+    var y = function (v) { return H - padY - ((v - lo) * (H - 2 * padY)) / (hi - lo); };
+
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label',
+      'RMSSD over time, ranging from ' + lo + ' to ' + hi + ' milliseconds');
+
+    var d = '', area = '';
+    pts.forEach(function (p, i) {
+      d += (i ? ' L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1);
+    });
+    area = d + ' L' + x(pts.length - 1).toFixed(1) + ' ' + (H - padY) +
+               ' L' + x(0).toFixed(1) + ' ' + (H - padY) + ' Z';
+
+    var fill = document.createElementNS(ns, 'path');
+    fill.setAttribute('d', area);
+    fill.setAttribute('fill', 'var(--accent-soft)');
+    svg.appendChild(fill);
+
+    var line = document.createElementNS(ns, 'path');
+    line.setAttribute('d', d);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', 'var(--accent)');
+    line.setAttribute('stroke-width', '2');
+    line.setAttribute('stroke-linejoin', 'round');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.appendChild(line);
+
+    pts.forEach(function (p, i) {
+      var c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', x(i).toFixed(1));
+      c.setAttribute('cy', y(p.v).toFixed(1));
+      c.setAttribute('r', '2.5');
+      c.setAttribute('fill', 'var(--accent)');
+      c.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(c);
+    });
+
+    return svg;
+  }
+
+  function toCsv(records) {
+    var rows = ['timestamp,iso_time,rmssd_ms'];
+    records.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
+      rows.push(r.t + ',' + new Date(r.t * 1000).toISOString() + ',' + r.v);
+    });
+    return rows.join('\n') + '\n';
+  }
+
+  function render() {
+    var params = parseHash();
+    var records = decodeRecords(fromBase64Url(params.d || ''));
+    var updated = parseInt(params.updated, 10) || 0;
+    var content = document.getElementById('content');
+    content.innerHTML = '';
+
+    document.getElementById('sub').textContent =
+      records.length
+        ? 'Last synced from the watch ' + fmtAgo(updated) + '.'
+        : 'Measurements taken during restful sleep.';
+
+    if (!records.length) {
+      var empty = el('div', 'card');
+      var inner = el('div', 'empty');
+      inner.appendChild(el('strong', null, 'No measurements yet'));
+      inner.appendChild(el('div', null,
+        'Measurements are taken automatically when the watch detects restful ' +
+        'sleep. They reach this page the next time you open Restful HRV on the ' +
+        'watch — the background worker cannot talk to the phone on its own.'));
+      empty.appendChild(inner);
+      content.appendChild(empty);
+      return;
+    }
+
+    var newest = records.reduce(function (a, b) { return a.t > b.t ? a : b; });
+    var values = records.map(function (r) { return r.v; });
+    var mean = Math.round(values.reduce(function (a, b) { return a + b; }, 0) / values.length);
+
+    var stats = el('div', 'stats');
+    [[newest.v + ' ms', 'Latest'], [mean + ' ms', 'Average'], [String(records.length), 'Readings']]
+      .forEach(function (pair) {
+        var s = el('div', 'stat');
+        s.appendChild(el('div', 'v', pair[0]));
+        s.appendChild(el('div', 'l', pair[1]));
+        stats.appendChild(s);
+      });
+    content.appendChild(stats);
+
+    // Two points are a line segment, not a trend, and one is a dot in an empty
+    // box. Below three the table says everything the chart would.
+    if (records.length >= 3) {
+      var chartCard = el('div', 'card');
+      content.appendChild(chartCard);
+      // Appended first so the card's real width is known before drawing.
+      chartCard.appendChild(buildChart(records, chartCard.clientWidth - 32));
+    }
+
+    var tableCard = el('div', 'card');
+    var table = el('table');
+    var thead = el('thead');
+    var htr = el('tr');
+    htr.appendChild(el('th', null, 'When'));
+    htr.appendChild(el('th', null, 'RMSSD'));
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    var tbody = el('tbody');
+    records.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (r) {
+      var tr = el('tr');
+      tr.appendChild(el('td', null, fmtDateTime(r.t)));
+      tr.appendChild(el('td', 'rmssd', r.v + ' ms'));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableCard.appendChild(table);
+    content.appendChild(tableCard);
+
+    var csv = toCsv(records);
+    var actions = el('div', 'card');
+    var btns = el('div', 'btns');
+
+    var copyBtn = el('button', 'primary', 'Copy as CSV');
+    copyBtn.addEventListener('click', function () {
+      var done = function () {
+        copyBtn.textContent = 'Copied';
+        setTimeout(function () { copyBtn.textContent = 'Copy as CSV'; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(csv).then(done, fallbackCopy);
+      } else {
+        fallbackCopy();
+      }
+      // Older mobile browsers have no clipboard API; select the text instead so
+      // the copy is still one long-press away.
+      function fallbackCopy() {
+        var ta = document.createElement('textarea');
+        ta.value = csv;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) { /* user copies manually */ }
+        document.body.removeChild(ta);
+      }
+    });
+    btns.appendChild(copyBtn);
+
+    var dl = el('a', 'btn', 'Download CSV');
+    dl.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+    dl.download = 'restful-hrv.csv';
+    btns.appendChild(dl);
+
+    actions.appendChild(btns);
+    actions.appendChild(el('p', 'note',
+      'This page runs entirely on your phone. The measurements travel in the ' +
+      'URL fragment, which browsers never send to the server, and nothing here ' +
+      'is uploaded anywhere.'));
+    content.appendChild(actions);
+  }
+
+  render();
+  window.addEventListener('hashchange', render);
+
+  // The chart is sized in pixels, so a rotation needs a redraw.
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(render, 150);
+  });
+})();
+</script>
+</body>
+</html>

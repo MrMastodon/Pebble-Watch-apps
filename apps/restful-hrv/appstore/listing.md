@@ -11,7 +11,7 @@ Restful HRV
 ## Version
 
 ```
-1.0
+1.1
 ```
 
 ## Category
@@ -44,12 +44,32 @@ average. Readings the sensor couldn't get a clean look at are thrown away
 rather than logged, so a bad night shows up as a gap instead of a wrong
 number.
 
-The app is a single on/off switch. Results are sent straight to your phone
-through Pebble's data logging, tagged HRV1, as a timestamp and an RMSSD value
-per measurement.
+The watch keeps your last 40 measurements and shows them in the app, newest
+first. Open the app's settings on your phone and you get the same numbers as
+a table and a chart, with a button to copy or download them as CSV. That page
+is a static file with no backend - the measurements travel to it in the URL
+fragment, which browsers never send to a server, so nothing is uploaded
+anywhere.
+
+Every measurement is also written to Pebble's data logging, tagged HRV1, for
+anyone who wants to pull the full record off the watch themselves.
 
 Requires a Pebble Time 2 - HRV peak-to-peak intervals need firmware 4.32 or
 newer and a heart rate sensor that reports them.
+```
+
+## Release notes (v1.1)
+
+```
+- The watch now keeps your last 40 measurements and lists them in the app,
+  newest first - press DOWN from the on/off screen.
+- Added a settings page on the phone showing the same measurements as a
+  table and a chart, with copy and download as CSV. It is a static page
+  with no server behind it: the numbers travel in the URL fragment, which
+  browsers never send to a host, so nothing is uploaded anywhere.
+- Measurements reach the phone when you open the app on the watch. Pebble
+  background workers cannot talk to the phone at all, so there is no way
+  around that; the settings page says how recently it was refreshed.
 ```
 
 ## Release notes (v1.0)
@@ -103,10 +123,10 @@ cd apps/restful-hrv
 pebble login
 pebble publish \
   --name "Restful HRV" \
-  --version 1.0 \
+  --version 1.1 \
   --description "Measures your HRV automatically every time you drop into restful sleep." \
   --category "health and fitness" \
-  --release-notes "Initial release." \
+  --release-notes "History on the watch, plus a settings page on the phone with chart and CSV export." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```

@@ -1,5 +1,6 @@
 #include <pebble_worker.h>
 #include <math.h>
+#include <string.h>
 
 #include "../../src/common/hrv_common.h"
 
@@ -82,6 +83,43 @@ static uint32_t prv_compute_rmssd_ms(void) {
   return (uint32_t)(sqrt(sum_sq_diff / count) + 0.5);
 }
 
+// Appends a finished measurement to the history the app's own screen reads and
+// the phone's settings page is fed from. This is a second copy of what goes to
+// DataLogging, on purpose: DataLogging data is only reachable from a native
+// companion app, so without this the numbers would be invisible on the watch
+// that took them.
+static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms) {
+  HrvRecord history[HRV_HISTORY_CAPACITY];
+  int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
+      ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
+
+  // A count that disagrees with what is actually stored means the two keys fell
+  // out of step - start over rather than read past the data that is really there.
+  if (count < 0 || count > HRV_HISTORY_CAPACITY) {
+    count = 0;
+  }
+  if (count > 0) {
+    int read = persist_read_data(PERSIST_KEY_HISTORY, history, sizeof(history));
+    if (read < (int)(count * sizeof(HrvRecord))) {
+      count = 0;
+    }
+  }
+
+  if (count == HRV_HISTORY_CAPACITY) {
+    memmove(&history[0], &history[1], (HRV_HISTORY_CAPACITY - 1) * sizeof(HrvRecord));
+    count = HRV_HISTORY_CAPACITY - 1;
+  }
+
+  history[count].timestamp = timestamp;
+  // Clamped rather than truncated: a wrapped 16-bit value would read as a
+  // plausible small number instead of an obviously pegged one.
+  history[count].rmssd_ms = (rmssd_ms > UINT16_MAX) ? UINT16_MAX : (uint16_t)rmssd_ms;
+  count++;
+
+  persist_write_data(PERSIST_KEY_HISTORY, history, count * sizeof(HrvRecord));
+  persist_write_int(PERSIST_KEY_HISTORY_COUNT, count);
+}
+
 static void prv_log_measurement(uint32_t rmssd_ms) {
   if (!s_log_session) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "HRV result dropped: no logging session");
@@ -129,6 +167,9 @@ static void prv_stop_measurement(void) {
   if (rmssd_ms > 0) {
     APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement complete: %u ms from %u intervals",
             (unsigned)rmssd_ms, (unsigned)s_ppi_count);
+    // History first: it is the copy the user can actually reach from the watch,
+    // so it should not depend on DataLogging having room.
+    prv_append_history((uint32_t)time(NULL), rmssd_ms);
     prv_log_measurement(rmssd_ms);
   } else {
     APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: only %u intervals",

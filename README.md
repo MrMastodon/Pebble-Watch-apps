@@ -36,12 +36,15 @@ pebble install --emulator emery   # or --phone <ip> for a real watch
 `scripts/build-all.sh` rebuilds every app and refreshes the `dist/*.pbw`
 files linked below.
 
+`docs/` holds the static configuration pages some apps open as their phone-side
+settings screen, served via GitHub Pages. They are plain HTML with no backend.
+
 ## Apps
 
 | App | What it does | Compiled app |
 |---|---|---|
 | [`one-off-alarm`](apps/one-off-alarm) | Set a single wake-up alarm for an arbitrary future date/time (e.g. "in 3 weeks at 9 AM"), instead of a recurring daily alarm. | [⬇ one-off-alarm.pbw](apps/one-off-alarm/dist/one-off-alarm.pbw) |
-| [`restful-hrv`](apps/restful-hrv) | Measure HRV (RMSSD) automatically for two minutes every time the watch enters restful sleep, and log each result to the phone. | [⬇ restful-hrv.pbw](apps/restful-hrv/dist/restful-hrv.pbw) |
+| [`restful-hrv`](apps/restful-hrv) | Measure HRV (RMSSD) automatically for two minutes every time the watch enters restful sleep. Keeps the history on the watch, with a chart and CSV export on the phone. | [⬇ restful-hrv.pbw](apps/restful-hrv/dist/restful-hrv.pbw) |
 
 To install a compiled app: download the `.pbw` file from the link above,
 then either drag it onto the Pebble phone app, or run
