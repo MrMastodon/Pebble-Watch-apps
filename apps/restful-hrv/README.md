@@ -199,6 +199,23 @@ pebble build
 pebble install --emulator emery     # or --phone <ip>
 ```
 
+`"enableMultiJS": true` in `package.json` is required, not optional. Without it
+the SDK bundles `src/pkjs/index.js` into the `.pbw` under its own name, while
+the phone looks for `pebble-js-app.js` at the bundle root and silently runs no
+JavaScript at all when it is not there. Everything on the watch keeps working,
+so the only symptom is that the settings page never opens and nothing is ever
+logged from the phone side. The build says so, quietly:
+
+```
+WARNING: enableMultiJS is not enabled for this project and pebble-js-app.js does not exist
+```
+
+To check a build, list the bundle - `pebble-js-app.js` has to be in it:
+
+```sh
+unzip -l build/restful-hrv.pbw
+```
+
 Note what the emulator cannot reproduce:
 
 - **The trigger.** `pebble emu-sleep` sets the sleep *metrics* but not the
