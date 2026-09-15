@@ -1,0 +1,33 @@
+{
+  "name": "restful-hrv",
+  "version": "1.0.0",
+  "description": "Measures HRV (RMSSD) automatically whenever the watch detects restful sleep, and logs each result to the phone.",
+  "author": "Pebble-Watch-apps contributors",
+  "private": true,
+  "keywords": ["pebble-app"],
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Restful HRV",
+    "uuid": "5e0af92f-a4c1-4073-b884-03300a6a5ce0",
+    "sdkVersion": "3",
+    "capabilities": [
+      "health"
+    ],
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "MENU_ICON",
+          "file": "images/icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}
