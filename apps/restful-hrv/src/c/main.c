@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.1.2"
+#define APP_VERSION "1.2.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -43,6 +43,11 @@ static TextLayer *s_version_layer;
 static Window *s_history_window;
 static MenuLayer *s_history_menu;
 static TextLayer *s_history_empty_layer;
+
+static Window *s_diag_window;
+static ScrollLayer *s_diag_scroll;
+static TextLayer *s_diag_text_layer;
+static char s_diag_text[512];
 
 static bool s_enabled;
 
@@ -245,6 +250,126 @@ static void prv_show_history(void) {
   window_stack_push(s_history_window, true);
 }
 
+// ---------------------------------------------------------- diagnostics screen
+
+// Absolute rather than relative ("3h ago"), because the useful question in the
+// morning is which part of the night something happened in.
+static void prv_format_when(char *buffer, size_t size, uint32_t timestamp) {
+  if (timestamp == 0) {
+    strncpy(buffer, "never", size);
+    buffer[size - 1] = '\0';
+    return;
+  }
+  time_t when = (time_t)timestamp;
+  struct tm *local = localtime(&when);
+  strftime(buffer, size, clock_is_24h_style() ? "%a %H:%M" : "%a %I:%M %p", local);
+}
+
+static const char *prv_outcome_text(uint8_t outcome) {
+  switch (outcome) {
+    case HRV_OUTCOME_LOGGED:   return "recorded";
+    case HRV_OUTCOME_TOO_FEW:  return "too few readings";
+    case HRV_OUTCOME_DISABLED: return "switched off";
+    default:                   return "none yet";
+  }
+}
+
+// Reads the worker's own account of the night. Every line is here to separate
+// one failure from another: a worker that was not running, sleep that was never
+// detected, restful sleep that never registered, a sensor that delivered
+// nothing, or readings too sparse to compute an RMSSD from.
+static void prv_build_diag_text(void) {
+  HrvDiagnostics diag;
+  memset(&diag, 0, sizeof(diag));
+  bool have = false;
+  if (persist_exists(PERSIST_KEY_DIAG)) {
+    have = persist_read_data(PERSIST_KEY_DIAG, &diag, sizeof(diag)) == (int)sizeof(diag);
+  }
+
+  if (!have) {
+    snprintf(s_diag_text, sizeof(s_diag_text),
+             "The background worker has not reported anything yet.\n\n"
+             "Turn measuring on and leave it running; this screen fills in as "
+             "the worker sees things.");
+    return;
+  }
+
+  char started[16], tick[16], sleep_seen[16], restful_seen[16], outcome_at[16];
+  prv_format_when(started, sizeof(started), diag.worker_started_at);
+  prv_format_when(tick, sizeof(tick), diag.last_tick_at);
+  prv_format_when(sleep_seen, sizeof(sleep_seen), diag.sleep_last_seen_at);
+  prv_format_when(restful_seen, sizeof(restful_seen), diag.restful_last_seen_at);
+  prv_format_when(outcome_at, sizeof(outcome_at), diag.last_outcome_at);
+
+  snprintf(s_diag_text, sizeof(s_diag_text),
+           "WORKER\n"
+           "Started: %s\n"
+           "Last alive: %s\n"
+           "\n"
+           "SLEEP DETECTION\n"
+           "Asleep: %s\n"
+           "Restful: %s\n"
+           "Sleep events: %u\n"
+           "\n"
+           "SENSOR\n"
+           "HRV readings: %u\n"
+           "Period granted: %s\n"
+           "\n"
+           "MEASUREMENTS\n"
+           "Episodes: %u\n"
+           "Last result: %s\n"
+           "Last at: %s\n"
+           "Readings used: %u",
+           started, tick,
+           sleep_seen, restful_seen, (unsigned)diag.sleep_events,
+           (unsigned)diag.hrv_events,
+           // Never requested is not the same as refused, and saying "no" here
+           // would point at the sensor when nothing had asked it for anything.
+           (diag.episodes == 0) ? "not requested" : (diag.hrv_request_ok ? "yes" : "no"),
+           (unsigned)diag.episodes,
+           prv_outcome_text(diag.last_outcome), outcome_at,
+           (unsigned)diag.last_sample_count);
+}
+
+static void prv_diag_window_load(Window *window) {
+  Layer *root_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(root_layer);
+
+  prv_build_diag_text();
+
+  s_diag_scroll = scroll_layer_create(bounds);
+  scroll_layer_set_click_config_onto_window(s_diag_scroll, window);
+
+  GRect text_bounds = GRect(6, 4, bounds.size.w - 12, 2000);
+  s_diag_text_layer = text_layer_create(text_bounds);
+  text_layer_set_text(s_diag_text_layer, s_diag_text);
+  text_layer_set_font(s_diag_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  text_layer_set_background_color(s_diag_text_layer, GColorClear);
+
+  GSize used = text_layer_get_content_size(s_diag_text_layer);
+  text_layer_set_size(s_diag_text_layer, GSize(text_bounds.size.w, used.h + 8));
+  scroll_layer_set_content_size(s_diag_scroll, GSize(bounds.size.w, used.h + 16));
+
+  scroll_layer_add_child(s_diag_scroll, text_layer_get_layer(s_diag_text_layer));
+  layer_add_child(root_layer, scroll_layer_get_layer(s_diag_scroll));
+}
+
+static void prv_diag_window_unload(Window *window) {
+  text_layer_destroy(s_diag_text_layer);
+  scroll_layer_destroy(s_diag_scroll);
+  window_destroy(s_diag_window);
+  s_diag_window = NULL;
+}
+
+static void prv_show_diagnostics(void) {
+  s_diag_window = window_create();
+  window_set_window_handlers(s_diag_window, (WindowHandlers) {
+    .load = prv_diag_window_load,
+    .unload = prv_diag_window_unload,
+  });
+  window_stack_push(s_diag_window, true);
+}
+
 // --------------------------------------------------------------- switch screen
 
 static void prv_update_display(void) {
@@ -263,8 +388,8 @@ static void prv_update_display(void) {
   text_layer_set_text(s_worker_layer, s_worker_text);
 
   text_layer_set_text(s_hint_layer, s_enabled
-      ? "SELECT to turn off\nDOWN for history"
-      : "SELECT to turn on\nDOWN for history");
+      ? "SELECT to turn off\nDOWN history  UP status"
+      : "SELECT to turn on\nDOWN history  UP status");
 }
 
 static void prv_poll_worker_state(void *data) {
@@ -310,9 +435,14 @@ static void prv_down_click_handler(ClickRecognizerRef recognizer, void *context)
   prv_show_history();
 }
 
+static void prv_up_click_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_show_diagnostics();
+}
+
 static void prv_click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_click_handler);
+  window_single_click_subscribe(BUTTON_ID_UP, prv_up_click_handler);
 }
 
 static void prv_window_load(Window *window) {

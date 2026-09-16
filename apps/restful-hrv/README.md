@@ -31,6 +31,7 @@ worker that keeps running with the app closed.
 - **SELECT** — turn measuring on or off. The setting is remembered across
   reboots and reinstalls.
 - **DOWN** — the measurement history, newest first.
+- **UP** — what the worker saw overnight, for when nothing was measured.
 - **Background** — whether the worker is actually running. Turning measuring on
   launches it; turning measuring off stops it, so it isn't holding the watch's
   single background-app slot for nothing.
@@ -54,6 +55,44 @@ restful sleep episodes a night. Times follow the watch's own 12/24-hour setting.
 The first time you turn it on, the watch may ask whether this app's background
 worker may replace whichever one is currently installed — Pebble allows only one
 at a time. Until you accept, the screen shows `Background: starting...`.
+
+## When nothing gets measured
+
+A night that produces no measurements is otherwise completely silent about why,
+since `APP_LOG` only exists while a computer is tethered. The **UP** button
+shows what the worker actually saw:
+
+```
+   WORKER
+   Started: Wed 23:14
+   Last alive: Thu 07:02
+
+   SLEEP DETECTION
+   Asleep: Thu 01:20
+   Restful: never
+   Sleep events: 6
+
+   SENSOR
+   HRV readings: 0
+   Period granted: not requested
+
+   MEASUREMENTS
+   Episodes: 0
+   Last result: none yet
+```
+
+Each line separates one failure from another:
+
+| What you see | What it means |
+|---|---|
+| `Last alive` hours old, or `never` | The worker was not running. Check the switch screen says `Background: running`. |
+| `Asleep: never` | The watch never registered you as asleep, so nothing downstream could fire. |
+| `Asleep` set, `Restful: never` | Sleep was tracked but never classified as restful. Nothing is wrong with the app; the trigger simply never occurred. |
+| `Episodes` above zero, `HRV readings: 0` | A measurement ran but the sensor produced no intervals at all. |
+| `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. Usually wrist position. |
+
+The counters are cumulative and survive reboots. They are reset only by
+reinstalling the app.
 
 ## What it measures
 

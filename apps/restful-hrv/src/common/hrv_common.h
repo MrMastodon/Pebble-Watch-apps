@@ -18,6 +18,11 @@
 #define PERSIST_KEY_HISTORY 2
 #define PERSIST_KEY_HISTORY_COUNT 3
 
+// Evidence about what the worker saw overnight. APP_LOG only exists while a
+// computer is tethered, so without this a night that produced nothing is
+// completely silent about why.
+#define PERSIST_KEY_DIAG 4
+
 // DataLogging tag for the measurement log, ASCII "HRV1". Each record is two
 // 4-byte unsigned ints: the UTC timestamp the measurement ended, then RMSSD in
 // whole milliseconds.
@@ -49,3 +54,34 @@ typedef struct __attribute__((__packed__)) {
 // not having to track a head index in a second persist key that could fall out
 // of step with the array.
 #define HRV_HISTORY_BYTES (HRV_HISTORY_CAPACITY * sizeof(HrvRecord))
+
+// What became of the most recent measurement. Values are persisted, so existing
+// ones must keep their meaning.
+typedef enum {
+  HRV_OUTCOME_NONE = 0,       // no measurement has been attempted yet
+  HRV_OUTCOME_LOGGED = 1,     // enough intervals; RMSSD recorded
+  HRV_OUTCOME_TOO_FEW = 2,    // ran, but never got enough clean readings
+  HRV_OUTCOME_DISABLED = 3,   // aborted because measuring was switched off
+} HrvOutcome;
+
+// Enough to tell the failure modes apart without a tethered computer: a worker
+// that was not running, sleep that was never detected, restful sleep that never
+// registered, a sensor that delivered nothing, or readings too sparse to use.
+typedef struct __attribute__((__packed__)) {
+  uint32_t worker_started_at;    // when the worker last initialised
+  uint32_t last_tick_at;         // last time the worker was demonstrably alive
+  uint32_t sleep_last_seen_at;   // last HealthActivitySleep
+  uint32_t restful_last_seen_at; // last HealthActivityRestfulSleep
+  uint32_t last_outcome_at;      // when the last measurement ended
+  uint16_t sleep_events;         // HealthEventSleepUpdate callbacks received
+  uint16_t episodes;             // measurements started
+  uint16_t hrv_events;           // HealthEventHRVUpdate callbacks received
+  uint16_t last_sample_count;    // usable intervals in the last measurement
+  uint8_t last_outcome;          // HrvOutcome
+  uint8_t hrv_request_ok;        // did health_service_set_hrv_sample_period() succeed
+} HrvDiagnostics;
+
+// Writing on every tick would mean hundreds of flash writes a night for a field
+// that only needs to show the worker was alive. Meaningful changes are written
+// as they happen; this is just the heartbeat in between.
+#define HRV_DIAG_HEARTBEAT_SEC 900

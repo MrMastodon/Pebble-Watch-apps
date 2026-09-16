@@ -41,6 +41,29 @@ static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed);
 
 static DataLoggingSessionRef s_log_session;
 
+// Evidence for the diagnostics screen. Held in RAM and flushed on change, so a
+// night that produced no measurements can still say which step it got stuck on.
+static HrvDiagnostics s_diag;
+static time_t s_diag_written_at;
+
+static void prv_diag_flush(void) {
+  persist_write_data(PERSIST_KEY_DIAG, &s_diag, sizeof(s_diag));
+  s_diag_written_at = time(NULL);
+}
+
+static void prv_diag_load(void) {
+  if (persist_exists(PERSIST_KEY_DIAG)) {
+    int read = persist_read_data(PERSIST_KEY_DIAG, &s_diag, sizeof(s_diag));
+    // A short read means the struct changed shape since it was written; the
+    // counters would be meaningless, so start clean rather than misreport.
+    if (read != (int)sizeof(s_diag)) {
+      memset(&s_diag, 0, sizeof(s_diag));
+    }
+  } else {
+    memset(&s_diag, 0, sizeof(s_diag));
+  }
+}
+
 static uint16_t s_ppi_buffer[PPI_BUFFER_SIZE];
 static uint16_t s_ppi_count;
 
@@ -142,10 +165,17 @@ static void prv_start_measurement(void) {
   s_measure_start = time(NULL);
   s_measuring = true;
 
-  health_service_set_hrv_sample_period(HRV_SAMPLE_PERIOD_SEC);
+  // The return value matters: if the sensor will not grant the sample period
+  // there is nothing to collect, and that is invisible from the outside.
+  bool granted = health_service_set_hrv_sample_period(HRV_SAMPLE_PERIOD_SEC);
   tick_timer_service_subscribe(MEASURING_TICK_UNIT, prv_tick_handler);
 
-  APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement started");
+  s_diag.episodes++;
+  s_diag.hrv_request_ok = granted ? 1 : 0;
+  prv_diag_flush();
+
+  APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement started (sample period granted: %s)",
+          granted ? "yes" : "no");
 }
 
 // Ends the current measurement, whatever the reason: the window elapsed, the
@@ -163,7 +193,14 @@ static void prv_stop_measurement(void) {
   health_service_set_hrv_sample_period(0);
   tick_timer_service_subscribe(IDLE_TICK_UNIT, prv_tick_handler);
 
+  s_diag.last_sample_count = s_ppi_count;
+  s_diag.last_outcome_at = (uint32_t)time(NULL);
+
   uint32_t rmssd_ms = prv_compute_rmssd_ms();
+  s_diag.last_outcome = (rmssd_ms > 0) ? HRV_OUTCOME_LOGGED
+                      : (prv_hrv_enabled() ? HRV_OUTCOME_TOO_FEW : HRV_OUTCOME_DISABLED);
+  prv_diag_flush();
+
   if (rmssd_ms > 0) {
     APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement complete: %u ms from %u intervals",
             (unsigned)rmssd_ms, (unsigned)s_ppi_count);
@@ -183,6 +220,23 @@ static void prv_evaluate_sleep_state(void) {
   HealthActivityMask activities = health_service_peek_current_activities();
   bool is_restful = (activities & HealthActivityRestfulSleep) != 0;
 
+  // Plain sleep is tracked purely as evidence. It is not what triggers a
+  // measurement, but "asleep all night, never restful" and "never asleep at
+  // all" are different problems and otherwise indistinguishable.
+  uint32_t now = (uint32_t)time(NULL);
+  bool changed = false;
+  if (activities & HealthActivitySleep) {
+    s_diag.sleep_last_seen_at = now;
+    changed = true;
+  }
+  if (is_restful) {
+    s_diag.restful_last_seen_at = now;
+    changed = true;
+  }
+  if (changed) {
+    prv_diag_flush();
+  }
+
   if (s_measuring) {
     if (!is_restful) {
       // The episode ended inside the window. Logging the partial measurement is
@@ -197,6 +251,14 @@ static void prv_evaluate_sleep_state(void) {
 }
 
 static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  time_t now = time(NULL);
+  s_diag.last_tick_at = (uint32_t)now;
+  // Only written periodically: this field exists to show the worker was alive,
+  // and a flash write every minute all night would be a real cost for that.
+  if (now - s_diag_written_at >= HRV_DIAG_HEARTBEAT_SEC) {
+    prv_diag_flush();
+  }
+
   if (s_measuring) {
     // Checked every tick rather than once per episode, so switching measuring
     // off in the app takes effect immediately instead of at the next episode.
@@ -220,6 +282,10 @@ static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 static void prv_health_handler(HealthEventType event, void *context) {
   switch (event) {
     case HealthEventHRVUpdate:
+      // Counted whether or not a measurement is running: zero here after a
+      // night means the sensor never produced an interval at all, which is a
+      // different fault from producing too few to use.
+      s_diag.hrv_events++;
       if (s_measuring && s_ppi_count < PPI_BUFFER_SIZE) {
         uint16_t ppi = health_service_peek_hrv_ppi_ms();
         // Zero means the sensor has no new reading, not an interval of zero.
@@ -228,8 +294,11 @@ static void prv_health_handler(HealthEventType event, void *context) {
         }
       }
       break;
-    case HealthEventSignificantUpdate:
     case HealthEventSleepUpdate:
+      s_diag.sleep_events++;
+      prv_evaluate_sleep_state();
+      break;
+    case HealthEventSignificantUpdate:
       prv_evaluate_sleep_state();
       break;
     default:
@@ -238,6 +307,11 @@ static void prv_health_handler(HealthEventType event, void *context) {
 }
 
 static void prv_init(void) {
+  prv_diag_load();
+  s_diag.worker_started_at = (uint32_t)time(NULL);
+  s_diag.last_tick_at = s_diag.worker_started_at;
+  prv_diag_flush();
+
   // Resumed rather than recreated, so records still waiting for the phone
   // survive the worker being restarted overnight.
   s_log_session = data_logging_create(HRV_LOG_TAG, DATA_LOGGING_UINT, 4, true);
@@ -258,6 +332,7 @@ static void prv_init(void) {
 
 static void prv_deinit(void) {
   prv_stop_measurement();
+  prv_diag_flush();
   // Repeated deliberately: prv_stop_measurement() is a no-op when idle, and the
   // sample period must never be left held by a worker that is going away.
   health_service_set_hrv_sample_period(0);
