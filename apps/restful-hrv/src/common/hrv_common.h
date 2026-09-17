@@ -35,6 +35,17 @@
 #define HRV_MEASURE_DURATION_SEC 120
 #define HRV_SAMPLE_PERIOD_SEC 1
 
+// Intervals the buffer can hold. This must not be the binding constraint on a
+// measurement: if it fills, the window stops being 120 seconds and quietly
+// becomes "the first N beats", which varies in duration with heart rate and
+// destroys the night-to-night comparability the whole app exists for.
+//
+// One slot per second was not enough - real hardware delivered around 136
+// intervals in a 120-second window at rest, so the buffer filled and the rest
+// were discarded. 300 covers a sustained 150 bpm, well above anything that
+// happens during restful sleep, for 600 bytes of a worker that has room.
+#define HRV_PPI_CAPACITY 300
+
 // One stored measurement. Six bytes rather than eight: RMSSD is tens to low
 // hundreds of milliseconds, so 16 bits is ample, and the saving is what lets a
 // useful number of records fit in a single persist value.

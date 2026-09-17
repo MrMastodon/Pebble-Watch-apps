@@ -194,6 +194,14 @@ while costing every HRV reading, which needs the flag set at that instant. The
 app counts empty readings separately and reports `no intervals` rather than
 `too few readings`, without claiming to know which of the two it is.
 
+### The buffer must not be the binding constraint
+
+The interval buffer holds 300 readings, not one per second of the window. Real
+hardware delivered around 136 intervals in a 120-second window at rest, so a
+buffer of 120 filled and the remainder were discarded - which quietly turns the
+measurement from "120 seconds" into "the first N beats". That varies in duration
+with heart rate, which is exactly the comparability the app is built to protect.
+
 ### No floating point in the worker
 
 RMSSD is computed with 64-bit integers and an integer square root, not
@@ -243,6 +251,7 @@ Fixed parameters, the same for every measurement:
 | Duration | 120 seconds |
 | Sample period | 1 second (the shortest the SDK accepts) |
 | Minimum usable readings | 10 peak-to-peak intervals |
+| Interval buffer | 300, so the window stays the constraint, not the buffer |
 | Measurements per night | one per restful sleep episode |
 
 A measurement that collects fewer than 10 intervals is **discarded, not logged**

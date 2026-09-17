@@ -16,10 +16,7 @@
 // night therefore produce several records, which is intended: they are separate
 // observations, not one nightly average.
 
-// One slot per second of the measurement window, which is as many readings as
-// a one-second sample period can be expected to produce. The collector bounds
-// its writes against this anyway rather than trusting that expectation.
-#define PPI_BUFFER_SIZE HRV_MEASURE_DURATION_SEC
+#define PPI_BUFFER_SIZE HRV_PPI_CAPACITY
 
 // Below this many intervals the RMSSD is noise rather than a measurement -
 // typically the sensor never got a clean read through the night's wrist
