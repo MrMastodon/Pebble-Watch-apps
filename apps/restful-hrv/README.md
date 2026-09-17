@@ -56,6 +56,38 @@ The first time you turn it on, the watch may ask whether this app's background
 worker may replace whichever one is currently installed — Pebble allows only one
 at a time. Until you accept, the screen shows `Background: starting...`.
 
+## The watch's copy is not the durable one
+
+Removing a watchapp deletes its persistent storage outright. From the firmware's
+`app_install_manager.c`:
+
+```c
+case APP_UPGRADED:
+  app_upgrade = true;
+  /* fallthrough */
+case APP_REMOVED:
+  // Only delete the app's persist file when the user explicitly removes the
+  // app, not during an AppDB clear.
+  if (!app_upgrade) {
+    persist_service_delete_file(s_install_callback_data.uuid);
+```
+
+An in-place upgrade keeps the data and a plain resync keeps it, but a removal
+does not - and the phone is what decides to remove an app. A sideloaded copy
+that is not in your locker can be removed on the next sync, taking the history,
+the diagnostics and the on/off setting with it. The giveaway is the switch
+reading `ON` again: that is the default when the key does not exist.
+
+This is why the app pushes everything to the phone whenever you open it, and why
+PebbleKit JS **merges** rather than replaces what it holds. The watch keeps the
+last 40 measurements and can lose them at any moment; the phone keeps up to 500
+and is what survives. An incoming batch is treated as new information about the
+past, never as the whole of it - replacing would discard everything older than
+whatever the watch happened to be holding at the time.
+
+The way to stop the removals is to have the app in your locker rather than
+sideloaded.
+
 ## When nothing gets measured
 
 A night that produces no measurements is otherwise completely silent about why,
@@ -91,8 +123,9 @@ Each line separates one failure from another:
 | `Episodes` above zero, `HRV readings: 0` | A measurement ran but the sensor produced no intervals at all. |
 | `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. Usually wrist position. |
 
-The counters are cumulative and survive reboots. They are reset only by
-reinstalling the app.
+The counters are cumulative and survive reboots. They are reset by removing the
+app - see above - and they are mirrored to the phone's settings page, which is
+where to look if the watch's copy has been wiped.
 
 ## What it measures
 

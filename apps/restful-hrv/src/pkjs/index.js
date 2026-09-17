@@ -20,6 +20,13 @@ var CONFIG_URL = 'https://mrmastodon.github.io/Pebble-Watch-apps/restful-hrv/';
 
 var STORAGE_RECORDS = 'hrvRecords';
 var STORAGE_UPDATED = 'hrvUpdatedAt';
+var STORAGE_STATUS = 'hrvStatus';
+
+// The phone is the durable copy. Removing the watchapp deletes its storage on
+// the watch outright, and the phone is what decides to remove it, so anything
+// only on the watch is one locker sync away from being gone. Far more than a
+// watch can hold, and still a few kilobytes of localStorage.
+var MAX_CACHED_RECORDS = 500;
 
 // Matches HrvRecord in src/common/hrv_common.h: a 4-byte little-endian UTC
 // timestamp followed by a 2-byte little-endian RMSSD in milliseconds.
@@ -49,6 +56,38 @@ function decodeRecords(bytes) {
   return records;
 }
 
+// Merges rather than replaces. The watch only keeps its last 40, and its
+// storage can be wiped entirely, so an incoming batch is new information about
+// the past - never the whole of it. Replacing would quietly discard everything
+// older than the watch happens to be holding.
+function mergeRecords(incoming) {
+  var byTime = {};
+  var existing = loadRecords();
+  var i;
+  for (i = 0; i < existing.length; i++) {
+    byTime[existing[i][0]] = existing[i][1];
+  }
+  var added = 0;
+  for (i = 0; i < incoming.length; i++) {
+    if (!(incoming[i][0] in byTime)) {
+      added++;
+    }
+    byTime[incoming[i][0]] = incoming[i][1];
+  }
+
+  var merged = [];
+  for (var key in byTime) {
+    if (byTime.hasOwnProperty(key)) {
+      merged.push([parseInt(key, 10), byTime[key]]);
+    }
+  }
+  merged.sort(function(a, b) { return a[0] - b[0]; });
+  if (merged.length > MAX_CACHED_RECORDS) {
+    merged = merged.slice(merged.length - MAX_CACHED_RECORDS);
+  }
+  return { records: merged, added: added };
+}
+
 function saveRecords(records) {
   try {
     localStorage.setItem(STORAGE_RECORDS, JSON.stringify(records));
@@ -56,6 +95,51 @@ function saveRecords(records) {
   } catch (e) {
     log('could not cache records: ' + e);
   }
+}
+
+function saveStatus(fields) {
+  try {
+    localStorage.setItem(STORAGE_STATUS, JSON.stringify(fields));
+  } catch (e) {
+    log('could not cache status: ' + e);
+  }
+}
+
+function loadStatus() {
+  try {
+    var raw = localStorage.getItem(STORAGE_STATUS);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Mirrors HrvDiagnostics from src/common/hrv_common.h: five little-endian
+// uint32 timestamps, four uint16 counters, then two bytes.
+function decodeStatus(bytes) {
+  if (bytes.length < 30) {
+    return null;
+  }
+  function u32(o) {
+    var v = ((bytes[o] & 0xff) | ((bytes[o + 1] & 0xff) << 8) | ((bytes[o + 2] & 0xff) << 16)) >>> 0;
+    return v + (bytes[o + 3] & 0xff) * 0x1000000;
+  }
+  function u16(o) {
+    return (bytes[o] & 0xff) | ((bytes[o + 1] & 0xff) << 8);
+  }
+  return {
+    workerStartedAt: u32(0),
+    lastTickAt: u32(4),
+    sleepLastSeenAt: u32(8),
+    restfulLastSeenAt: u32(12),
+    lastOutcomeAt: u32(16),
+    sleepEvents: u16(20),
+    episodes: u16(22),
+    hrvEvents: u16(24),
+    lastSampleCount: u16(26),
+    lastOutcome: bytes[28] & 0xff,
+    hrvRequestOk: bytes[29] & 0xff
+  };
 }
 
 function loadRecords() {
@@ -115,6 +199,10 @@ Pebble.addEventListener('showConfiguration', function() {
     // The page is told when this cache was last refreshed, so it can say so
     // rather than silently presenting stale numbers as current.
     url = CONFIG_URL + '#v=1&updated=' + loadUpdatedAt() + '&d=' + encodeRecords(records);
+    var status = loadStatus();
+    if (status) {
+      url += '&s=' + encodeURIComponent(JSON.stringify(status));
+    }
     log('opening settings with ' + records.length + ' measurements');
   } catch (e) {
     // An empty page that loads beats a spinner that never resolves.
@@ -143,14 +231,28 @@ Pebble.addEventListener('ready', function() {
 
 Pebble.addEventListener('appmessage', function(e) {
   try {
-    var payload = e && e.payload && e.payload.HrvHistory;
+    var payload = e && e.payload;
     if (!payload) {
       return;
     }
-    var records = decodeRecords(payload);
-    if (records.length > 0) {
-      saveRecords(records);
-      log('cached ' + records.length + ' measurements');
+
+    if (payload.HrvHistory) {
+      var incoming = decodeRecords(payload.HrvHistory);
+      if (incoming.length > 0) {
+        var result = mergeRecords(incoming);
+        saveRecords(result.records);
+        log('received ' + incoming.length + ' measurements, ' + result.added +
+            ' new, ' + result.records.length + ' held');
+      }
+    }
+
+    if (payload.HrvStatus) {
+      var status = decodeStatus(payload.HrvStatus);
+      if (status) {
+        status.receivedAt = Math.floor(Date.now() / 1000);
+        saveStatus(status);
+        log('cached worker status');
+      }
     }
   } catch (err) {
     log('could not handle message from watch: ' + err);

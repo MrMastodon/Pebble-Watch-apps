@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.2.0"
+#define APP_VERSION "1.3.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -21,7 +21,7 @@
 
 // The history is sent to the phone as one byte array, so the outbox has to fit
 // the whole thing plus dictionary overhead in a single message.
-#define OUTBOX_SIZE (HRV_HISTORY_BYTES + 64)
+#define OUTBOX_SIZE (HRV_HISTORY_BYTES + sizeof(HrvDiagnostics) + 96)
 #define INBOX_SIZE 64
 
 // One retry, because the usual reason a send fails is that the phone connection
@@ -93,8 +93,29 @@ static void prv_load_history(void) {
 // Hands the whole history to PebbleKit JS, which caches it so the settings page
 // can show it later. The worker cannot do this itself - background workers have
 // no AppMessage - so the data only reaches the phone while this app is open.
+// Loads the worker's record of the night. Returns false when there is none.
+static bool prv_load_diagnostics(HrvDiagnostics *diag) {
+  memset(diag, 0, sizeof(*diag));
+  if (!persist_exists(PERSIST_KEY_DIAG)) {
+    return false;
+  }
+  return persist_read_data(PERSIST_KEY_DIAG, diag, sizeof(*diag)) == (int)sizeof(*diag);
+}
+
+// Hands the history and the worker's status to the phone, which keeps them
+// somewhere the watch cannot reach.
+//
+// This is not only a convenience. Removing an app deletes its persistent
+// storage outright, and the phone is what decides to remove it - so everything
+// on the watch is one locker sync away from being gone. The copy on the phone
+// is the durable one.
 static void prv_send_history_to_phone(void) {
-  if (s_history_count == 0) {
+  HrvDiagnostics diag;
+  bool have_diag = prv_load_diagnostics(&diag);
+
+  // Sent even with nothing measured: a night that produced no measurements is
+  // exactly when the status is worth having off the watch.
+  if (s_history_count == 0 && !have_diag) {
     return;
   }
 
@@ -106,8 +127,13 @@ static void prv_send_history_to_phone(void) {
     APP_LOG(APP_LOG_LEVEL_INFO, "History send skipped, AppMessageResult %d", (int)begin);
     return;
   }
-  dict_write_data(iter, MESSAGE_KEY_HrvHistory, (const uint8_t *)s_history,
-                  s_history_count * sizeof(HrvRecord));
+  if (s_history_count > 0) {
+    dict_write_data(iter, MESSAGE_KEY_HrvHistory, (const uint8_t *)s_history,
+                    s_history_count * sizeof(HrvRecord));
+  }
+  if (have_diag) {
+    dict_write_data(iter, MESSAGE_KEY_HrvStatus, (const uint8_t *)&diag, sizeof(diag));
+  }
   app_message_outbox_send();
 }
 
@@ -280,13 +306,7 @@ static const char *prv_outcome_text(uint8_t outcome) {
 // nothing, or readings too sparse to compute an RMSSD from.
 static void prv_build_diag_text(void) {
   HrvDiagnostics diag;
-  memset(&diag, 0, sizeof(diag));
-  bool have = false;
-  if (persist_exists(PERSIST_KEY_DIAG)) {
-    have = persist_read_data(PERSIST_KEY_DIAG, &diag, sizeof(diag)) == (int)sizeof(diag);
-  }
-
-  if (!have) {
+  if (!prv_load_diagnostics(&diag)) {
     snprintf(s_diag_text, sizeof(s_diag_text),
              "The background worker has not reported anything yet.\n\n"
              "Turn measuring on and leave it running; this screen fills in as "

@@ -79,6 +79,13 @@
   .note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
   .empty { text-align: center; color: var(--muted); padding: 28px 8px; }
   .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+  h2 { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase;
+       letter-spacing: 0.06em; margin: 0 0 10px; }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; }
+  dt { color: var(--muted); font-size: 14px; }
+  dd { margin: 0; text-align: right; font-size: 14px; font-variant-numeric: tabular-nums; }
+  dd.warn { color: #c2410c; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { dd.warn { color: #fb923c; } }
 </style>
 </head>
 <body>
@@ -229,9 +236,47 @@
     return rows.join('\n') + '\n';
   }
 
+  // The worker's own account of the night, mirrored off the watch because
+  // removing the app deletes everything stored on it.
+  function buildStatus(status) {
+    var card = el('div', 'card');
+    card.appendChild(el('h2', null, 'Watch status'));
+
+    var never = function (ts) { return ts ? fmtDateTime(ts) : 'never'; };
+    var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings', 3: 'switched off' };
+
+    var rows = [
+      ['Worker last alive', never(status.lastTickAt), !status.lastTickAt],
+      ['Asleep', never(status.sleepLastSeenAt), !status.sleepLastSeenAt],
+      ['Restful sleep', never(status.restfulLastSeenAt), !status.restfulLastSeenAt],
+      ['Sleep events', String(status.sleepEvents), false],
+      ['HRV readings', String(status.hrvEvents), false],
+      ['Measurements started', String(status.episodes), false],
+      ['Last result', outcomes[status.lastOutcome] || 'unknown', status.lastOutcome === 2],
+      ['Readings used', String(status.lastSampleCount), false]
+    ];
+
+    var dl = el('dl');
+    rows.forEach(function (row) {
+      dl.appendChild(el('dt', null, row[0]));
+      // Flagged rather than merely shown: "never" on these is the whole answer
+      // to why a night produced nothing.
+      dl.appendChild(el('dd', row[2] ? 'warn' : null, row[1]));
+    });
+    card.appendChild(dl);
+    card.appendChild(el('p', 'note',
+      'Sent from the watch the last time you opened the app. It explains a night ' +
+      'that measured nothing: no restful sleep means the trigger never occurred.'));
+    return card;
+  }
+
   function render() {
     var params = parseHash();
     var records = decodeRecords(fromBase64Url(params.d || ''));
+    var status = null;
+    try {
+      if (params.s) { status = JSON.parse(decodeURIComponent(params.s)); }
+    } catch (e) { status = null; }
     var updated = parseInt(params.updated, 10) || 0;
     var content = document.getElementById('content');
     content.innerHTML = '';
@@ -251,6 +296,9 @@
         'watch — the background worker cannot talk to the phone on its own.'));
       empty.appendChild(inner);
       content.appendChild(empty);
+      if (status) {
+        content.appendChild(buildStatus(status));
+      }
       return;
     }
 
@@ -338,6 +386,10 @@
       'URL fragment, which browsers never send to the server, and nothing here ' +
       'is uploaded anywhere.'));
     content.appendChild(actions);
+
+    if (status) {
+      content.appendChild(buildStatus(status));
+    }
   }
 
   render();
