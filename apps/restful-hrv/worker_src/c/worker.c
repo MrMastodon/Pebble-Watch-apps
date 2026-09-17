@@ -294,7 +294,12 @@ static void prv_health_handler(HealthEventType event, void *context) {
       // Counted whether or not a measurement is running: zero here after a
       // night means the sensor never produced an interval at all, which is a
       // different fault from producing too few to use.
+      // Counted separately because this one arrives whether or not we asked:
+      // the health service broadcasts every HRV reading to all subscribers.
       s_diag.hrv_events++;
+      if (s_measuring) {
+        s_diag.hrv_events_measuring++;
+      }
       if (s_measuring && s_ppi_count < PPI_BUFFER_SIZE) {
         uint16_t ppi = health_service_peek_hrv_ppi_ms();
         if (ppi > 0) {

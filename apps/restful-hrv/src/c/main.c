@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.4.1"
+#define APP_VERSION "1.4.2"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -333,8 +333,9 @@ static void prv_build_diag_text(void) {
            "Sleep events: %u\n"
            "\n"
            "SENSOR\n"
-           "HRV readings: %u\n"
-           "Empty: %u\n"
+           "All day: %u\n"
+           "While measuring: %u\n"
+           "Of those, empty: %u\n"
            "Period granted: %s\n"
            "\n"
            "MEASUREMENTS\n"
@@ -344,7 +345,8 @@ static void prv_build_diag_text(void) {
            "Readings used: %u",
            started, tick,
            sleep_seen, restful_seen, (unsigned)diag.sleep_events,
-           (unsigned)diag.hrv_events, (unsigned)diag.hrv_zero_events,
+           (unsigned)diag.hrv_events, (unsigned)diag.hrv_events_measuring,
+           (unsigned)diag.hrv_zero_events,
            // Never requested is not the same as refused, and saying "no" here
            // would point at the sensor when nothing had asked it for anything.
            (diag.episodes == 0) ? "not requested" : (diag.hrv_request_ok ? "yes" : "no"),

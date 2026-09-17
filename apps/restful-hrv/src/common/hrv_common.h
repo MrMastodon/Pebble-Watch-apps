@@ -91,7 +91,14 @@ typedef struct __attribute__((__packed__)) {
   // on the same flag - a heart rate is only filled in when it is set - so a
   // night with a heart rate graph is a night when it was set at least some of
   // the time. Counting these separately is what will show whether it flickers.
-  uint16_t hrv_zero_events;      // HRV events that carried no interval
+  uint16_t hrv_zero_events;      // ...of those, ones that carried no interval
+
+  // The HRV broadcast in hrm_manager.c is an unconditional event_put - it is
+  // not filtered by what the receiving app asked for, unlike the raw HRM
+  // stream. So hrv_events above counts every reading the sensor produced all
+  // day, whoever caused it, and says nothing about our own measurement windows.
+  // This is the one that does.
+  uint16_t hrv_events_measuring;  // HRV events that arrived during a measurement
 } HrvDiagnostics;
 
 // Writing on every tick would mean hundreds of flash writes a night for a field

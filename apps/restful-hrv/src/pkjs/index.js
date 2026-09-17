@@ -140,7 +140,8 @@ function decodeStatus(bytes) {
     lastOutcome: bytes[28] & 0xff,
     hrvRequestOk: bytes[29] & 0xff,
     // Appended to the struct later; tolerate a watch still sending the old one.
-    hrvZeroEvents: (bytes.length >= 32) ? u16(30) : 0
+    hrvZeroEvents: (bytes.length >= 32) ? u16(30) : 0,
+    hrvEventsMeasuring: (bytes.length >= 34) ? u16(32) : null
   };
 }
 

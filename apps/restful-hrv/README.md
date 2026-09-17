@@ -120,9 +120,30 @@ Each line separates one failure from another:
 | `Last alive` hours old, or `never` | The worker was not running. Check the switch screen says `Background: running`. |
 | `Asleep: never` | The watch never registered you as asleep, so nothing downstream could fire. |
 | `Asleep` set, `Restful: never` | Sleep was tracked but never classified as restful. Nothing is wrong with the app; the trigger simply never occurred. |
-| `Episodes` above zero, `HRV readings: 0` | A measurement ran but the sensor produced no intervals at all. |
+| `Episodes` above zero, `While measuring: 0` | Measurements ran but no HRV reading arrived inside any of their windows. |
+| `While measuring` high, `Of those, empty` about the same | Readings arrived and every one came back without an interval. |
 | `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. |
 | `Last result: no intervals`, `Empty` counting up | The sensor was running and every reading came back without a heartbeat interval. See below. |
+
+### "HRV readings" all day is not the same as readings you can use
+
+`HealthEventHRVUpdate` is broadcast to every health service subscriber
+unconditionally. The per-subscriber feature filter in `hrm_manager.c` applies to
+the raw HRM stream, not to this:
+
+```c
+if (data->features & HRMFeature_HRV) {
+  PebbleEvent health_event = { ... .ppi_ms = data->hrv_ppi_ms ... };
+  event_put(&health_event);
+}
+```
+
+So this app receives HRV events whenever the sensor produces any, whoever asked
+for them, as long as something holds an HRM subscription at all - which Pebble
+Health does, all day, for the heart rate graph. A large "HRV readings" count
+therefore says nothing about whether a measurement had anything to work with.
+Only the count taken inside a measurement window does, which is why the two are
+reported separately.
 
 ### A peak-to-peak interval of zero is not "no reading yet"
 

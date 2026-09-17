@@ -251,7 +251,12 @@
       ['Asleep', never(status.sleepLastSeenAt), !status.sleepLastSeenAt],
       ['Restful sleep', never(status.restfulLastSeenAt), !status.restfulLastSeenAt],
       ['Sleep events', String(status.sleepEvents), false],
-      ['HRV readings', String(status.hrvEvents), false],
+      ['HRV readings, all day', String(status.hrvEvents), false],
+      // The all-day figure counts every reading the sensor produced for anyone.
+      // Only this one is about our own measurement windows.
+      ['While measuring', status.hrvEventsMeasuring === null || status.hrvEventsMeasuring === undefined
+        ? 'not recorded' : String(status.hrvEventsMeasuring),
+       status.hrvEventsMeasuring === 0],
       ['Of those, empty', String(status.hrvZeroEvents || 0), (status.hrvZeroEvents || 0) > 0],
       ['Measurements started', String(status.episodes), false],
       ['Sample period granted', status.episodes === 0 ? 'not requested'
@@ -275,11 +280,10 @@
     if ((status.hrvZeroEvents || 0) > 0 && status.lastOutcome !== 1) {
       // Worth spelling out, because the watch is otherwise reporting thousands of
       // readings and it looks like the sensor is working perfectly.
-      note = 'The sensor sent readings but none of them carried a heartbeat ' +
-             'interval. In the watch\u2019s sensor driver that only happens while ' +
-             'it does not believe it is being worn - which can flicker even when ' +
-             'the heart rate graph looks continuous, since that is averaged over ' +
-             'whole minutes. A firmer, higher strap position is worth trying.';
+      note = 'Readings arrived during the measurement but none carried a ' +
+             'heartbeat interval. In the watch\u2019s sensor driver that only ' +
+             'happens while it does not believe it is being worn, which can ' +
+             'flicker even when the heart rate graph looks continuous.';
     }
     card.appendChild(el('p', 'note', note));
     return card;
