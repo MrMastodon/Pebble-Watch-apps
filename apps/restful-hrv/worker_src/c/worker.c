@@ -70,6 +70,11 @@ static uint16_t s_ppi_count;
 static bool s_measuring;
 static time_t s_measure_start;
 
+// A measurement the user asked for from the app, rather than one restful sleep
+// triggered. It runs the same code on the same sensor subscription - the only
+// difference is that it is not cancelled by not being asleep.
+static bool s_manual;
+
 // Last seen state of the restful sleep bit. A measurement starts on the
 // transition into restful sleep, not on the bit merely being set, so that
 // finishing a measurement mid-episode does not immediately start another.
@@ -187,6 +192,7 @@ static void prv_stop_measurement(void) {
     return;
   }
   s_measuring = false;
+  s_manual = false;
 
   // Released first, so the sensor stops being driven at the measurement rate
   // even if something below misbehaves.
@@ -247,7 +253,9 @@ static void prv_evaluate_sleep_state(void) {
   }
 
   if (s_measuring) {
-    if (!is_restful) {
+    // A manual measurement is deliberately not tied to the sleep state, or it
+    // would be cancelled on the first tick for the obvious reason.
+    if (!is_restful && !s_manual) {
       // The episode ended inside the window. Logging the partial measurement is
       // better than discarding it, as long as it cleared the sample floor.
       prv_stop_measurement();
@@ -271,9 +279,13 @@ static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (s_measuring) {
     // Checked every tick rather than once per episode, so switching measuring
     // off in the app takes effect immediately instead of at the next episode.
-    if (!prv_hrv_enabled()) {
+    if (!prv_hrv_enabled() && !s_manual) {
       prv_stop_measurement();
       return;
+    }
+    // Flushed every second while the user is watching the numbers move.
+    if (s_manual) {
+      prv_diag_flush();
     }
     // Measured against the wall clock rather than counted in ticks, so a tick
     // the worker misses under load does not stretch the window.
@@ -286,6 +298,17 @@ static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   }
 
   prv_evaluate_sleep_state();
+}
+
+static void prv_worker_message_handler(uint16_t type, AppWorkerMessage *message) {
+  if (type != WORKER_MSG_FROM_APP || !message) {
+    return;
+  }
+  if (message->data0 == WORKER_CMD_MEASURE_NOW && !s_measuring) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "Manual measurement requested");
+    s_manual = true;
+    prv_start_measurement();
+  }
 }
 
 static void prv_health_handler(HealthEventType event, void *context) {
@@ -340,6 +363,7 @@ static void prv_init(void) {
 
   health_service_events_subscribe(prv_health_handler, NULL);
   tick_timer_service_subscribe(IDLE_TICK_UNIT, prv_tick_handler);
+  app_worker_message_subscribe(prv_worker_message_handler);
 
   // Left false even if the watch is already in restful sleep, so a worker that
   // starts or restarts mid-episode still measures that episode rather than

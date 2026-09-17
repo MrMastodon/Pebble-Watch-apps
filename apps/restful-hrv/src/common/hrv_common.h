@@ -101,6 +101,12 @@ typedef struct __attribute__((__packed__)) {
   uint16_t hrv_events_measuring;  // HRV events that arrived during a measurement
 } HrvDiagnostics;
 
+// Messages from the app to the worker. Only one so far: run a measurement now,
+// without waiting for restful sleep. Debugging this app against real sleep means
+// a whole night per attempt, which is no way to find anything out.
+#define WORKER_MSG_FROM_APP 0
+#define WORKER_CMD_MEASURE_NOW 1
+
 // Writing on every tick would mean hundreds of flash writes a night for a field
 // that only needs to show the worker was alive. Meaningful changes are written
 // as they happen; this is just the heartbeat in between.

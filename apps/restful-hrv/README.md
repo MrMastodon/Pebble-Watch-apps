@@ -31,7 +31,8 @@ worker that keeps running with the app closed.
 - **SELECT** — turn measuring on or off. The setting is remembered across
   reboots and reinstalls.
 - **DOWN** — the measurement history, newest first.
-- **UP** — what the worker saw overnight, for when nothing was measured.
+- **UP** — what the worker saw overnight, for when nothing was measured. Holding
+  SELECT there runs a measurement immediately, without waiting for sleep.
 - **Background** — whether the worker is actually running. Turning measuring on
   launches it; turning measuring off stops it, so it isn't holding the watch's
   single background-app slot for nothing.
@@ -191,6 +192,20 @@ minutes, so a flag that flickers can still leave a continuous-looking graph
 while costing every HRV reading, which needs the flag set at that instant. The
 app counts empty readings separately and reports `no intervals` rather than
 `too few readings`, without claiming to know which of the two it is.
+
+### Testing without waiting for a night
+
+Holding SELECT on the status screen asks the worker to run a measurement now.
+It is the same code on the same sensor subscription as a real one - the only
+difference is that it is not cancelled by you being awake - and the counters
+above it update every second while it runs.
+
+This exists because debugging against real sleep costs a night per attempt,
+which is far too slow to find anything out. Sit still for two minutes with the
+watch on and watch `While measuring` and `Of those, empty` move.
+
+A manual measurement is logged and appears in the history like any other, so
+expect test values among your real ones.
 
 The counters are cumulative and survive reboots. They are reset by removing the
 app - see above - and they are mirrored to the phone's settings page, which is

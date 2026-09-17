@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.4.2"
+#define APP_VERSION "1.5.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -47,7 +47,8 @@ static TextLayer *s_history_empty_layer;
 static Window *s_diag_window;
 static ScrollLayer *s_diag_scroll;
 static TextLayer *s_diag_text_layer;
-static char s_diag_text[512];
+static char s_diag_text[640];
+static AppTimer *s_diag_refresh_timer;
 
 static bool s_enabled;
 
@@ -338,6 +339,8 @@ static void prv_build_diag_text(void) {
            "Of those, empty: %u\n"
            "Period granted: %s\n"
            "\n"
+           "Hold SELECT: measure now\n"
+           "\n"
            "MEASUREMENTS\n"
            "Episodes: %u\n"
            "Last result: %s\n"
@@ -355,6 +358,46 @@ static void prv_build_diag_text(void) {
            (unsigned)diag.last_sample_count);
 }
 
+static void prv_diag_refresh(void *data);
+
+static void prv_diag_redraw(void) {
+  if (!s_diag_text_layer) {
+    return;
+  }
+  prv_build_diag_text();
+  // Setting the same pointer again does not repaint on its own.
+  text_layer_set_text(s_diag_text_layer, "");
+  text_layer_set_text(s_diag_text_layer, s_diag_text);
+}
+
+static void prv_request_measurement(ClickRecognizerRef recognizer, void *context) {
+  if (!app_worker_is_running()) {
+    return;
+  }
+  AppWorkerMessage message = { .data0 = WORKER_CMD_MEASURE_NOW };
+  app_worker_send_message(WORKER_MSG_FROM_APP, &message);
+  vibes_short_pulse();
+
+  // The worker flushes its counters every second during a manual measurement,
+  // so they can be watched here rather than waited for overnight.
+  if (!s_diag_refresh_timer) {
+    s_diag_refresh_timer = app_timer_register(1000, prv_diag_refresh, NULL);
+  }
+}
+
+static void prv_diag_refresh(void *data) {
+  s_diag_refresh_timer = NULL;
+  prv_diag_redraw();
+  s_diag_refresh_timer = app_timer_register(1000, prv_diag_refresh, NULL);
+}
+
+static void prv_diag_click_config(void *context) {
+  // Long press, so it cannot be hit while scrolling the page.
+  window_long_click_subscribe(BUTTON_ID_SELECT, 0, prv_request_measurement, NULL);
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler)scroll_layer_scroll_up_click_handler);
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler)scroll_layer_scroll_down_click_handler);
+}
+
 static void prv_diag_window_load(Window *window) {
   Layer *root_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root_layer);
@@ -363,6 +406,9 @@ static void prv_diag_window_load(Window *window) {
 
   s_diag_scroll = scroll_layer_create(bounds);
   scroll_layer_set_click_config_onto_window(s_diag_scroll, window);
+  // Replaces the scroll layer's provider, so the scroll handlers are re-added
+  // above alongside the one that starts a measurement.
+  window_set_click_config_provider_with_context(window, prv_diag_click_config, s_diag_scroll);
 
   GRect text_bounds = GRect(6, 4, bounds.size.w - 12, 2000);
   s_diag_text_layer = text_layer_create(text_bounds);
@@ -379,6 +425,10 @@ static void prv_diag_window_load(Window *window) {
 }
 
 static void prv_diag_window_unload(Window *window) {
+  if (s_diag_refresh_timer) {
+    app_timer_cancel(s_diag_refresh_timer);
+    s_diag_refresh_timer = NULL;
+  }
   text_layer_destroy(s_diag_text_layer);
   scroll_layer_destroy(s_diag_scroll);
   window_destroy(s_diag_window);
