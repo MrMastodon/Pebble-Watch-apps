@@ -121,7 +121,39 @@ Each line separates one failure from another:
 | `Asleep: never` | The watch never registered you as asleep, so nothing downstream could fire. |
 | `Asleep` set, `Restful: never` | Sleep was tracked but never classified as restful. Nothing is wrong with the app; the trigger simply never occurred. |
 | `Episodes` above zero, `HRV readings: 0` | A measurement ran but the sensor produced no intervals at all. |
-| `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. Usually wrist position. |
+| `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. |
+| `Last result: not on wrist`, `Off-wrist` counting up | The sensor was running but reported no skin contact, so every reading came back empty. Tighten the strap and wear the watch higher up the wrist. |
+
+### A peak-to-peak interval of zero means off-wrist
+
+The SDK documents `health_service_peek_hrv_ppi_ms()` as returning "0 if no
+reading is available yet", which hides what a zero actually is. In the Pebble
+Time 2's sensor driver (`gh3x2x.c` in PebbleOS) a real reading skips any
+interval that is not plausible:
+
+```c
+if ((rri[i] <= 0) || (rri[i] > UINT16_MAX)) {
+  continue;
+}
+```
+
+and a zero is emitted from exactly one place - the branch taken when the watch
+does not believe it is being worn:
+
+```c
+if (!HRM->state->is_wear) {
+  HRMData hrm_data = {0};              // hrv_ppi_ms = 0
+  hrm_data.features = HRMFeature_HRV;
+  hrm_data.hrv_quality = HRMQuality_OffWrist;
+  hrm_manager_new_data_cb(&hrm_data);
+  return;
+}
+```
+
+So a measurement full of zeroes is not a weak signal, it is no skin contact -
+and the watch will happily report thousands of "HRV readings" while it happens,
+which makes the sensor look like it is working perfectly. The app counts these
+separately and reports `not on wrist` rather than `too few readings`.
 
 The counters are cumulative and survive reboots. They are reset by removing the
 app - see above - and they are mirrored to the phone's settings page, which is

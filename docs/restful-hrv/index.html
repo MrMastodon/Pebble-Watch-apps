@@ -243,7 +243,8 @@
     card.appendChild(el('h2', null, 'Watch status'));
 
     var never = function (ts) { return ts ? fmtDateTime(ts) : 'never'; };
-    var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings', 3: 'switched off' };
+    var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings',
+                     3: 'switched off', 4: 'not on wrist' };
 
     var rows = [
       ['Worker last alive', never(status.lastTickAt), !status.lastTickAt],
@@ -251,8 +252,10 @@
       ['Restful sleep', never(status.restfulLastSeenAt), !status.restfulLastSeenAt],
       ['Sleep events', String(status.sleepEvents), false],
       ['HRV readings', String(status.hrvEvents), false],
+      ['Of those, off-wrist', String(status.hrvZeroEvents || 0), (status.hrvZeroEvents || 0) > 0],
       ['Measurements started', String(status.episodes), false],
-      ['Last result', outcomes[status.lastOutcome] || 'unknown', status.lastOutcome === 2],
+      ['Last result', outcomes[status.lastOutcome] || 'unknown',
+       status.lastOutcome === 2 || status.lastOutcome === 4],
       ['Readings used', String(status.lastSampleCount), false]
     ];
 
@@ -264,9 +267,18 @@
       dl.appendChild(el('dd', row[2] ? 'warn' : null, row[1]));
     });
     card.appendChild(dl);
-    card.appendChild(el('p', 'note',
-      'Sent from the watch the last time you opened the app. It explains a night ' +
-      'that measured nothing: no restful sleep means the trigger never occurred.'));
+    var note = 'Sent from the watch the last time you opened the app. It explains ' +
+               'a night that measured nothing: no restful sleep means the trigger ' +
+               'never occurred.';
+    if ((status.hrvZeroEvents || 0) > 0 && status.lastOutcome !== 1) {
+      // Worth spelling out, because the watch is otherwise reporting thousands of
+      // readings and it looks like the sensor is working perfectly.
+      note = 'The sensor sent readings all night but reported the watch as not ' +
+             'being worn, so none of them carried a heartbeat interval. This is ' +
+             'skin contact, not software: tighten the strap a notch and wear the ' +
+             'watch a little higher up the wrist, above the bone.';
+    }
+    card.appendChild(el('p', 'note', note));
     return card;
   }
 

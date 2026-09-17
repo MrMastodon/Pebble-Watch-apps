@@ -138,7 +138,9 @@ function decodeStatus(bytes) {
     hrvEvents: u16(24),
     lastSampleCount: u16(26),
     lastOutcome: bytes[28] & 0xff,
-    hrvRequestOk: bytes[29] & 0xff
+    hrvRequestOk: bytes[29] & 0xff,
+    // Appended to the struct later; tolerate a watch still sending the old one.
+    hrvZeroEvents: (bytes.length >= 32) ? u16(30) : 0
   };
 }
 

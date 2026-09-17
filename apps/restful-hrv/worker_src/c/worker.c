@@ -197,8 +197,17 @@ static void prv_stop_measurement(void) {
   s_diag.last_outcome_at = (uint32_t)time(NULL);
 
   uint32_t rmssd_ms = prv_compute_rmssd_ms();
-  s_diag.last_outcome = (rmssd_ms > 0) ? HRV_OUTCOME_LOGGED
-                      : (prv_hrv_enabled() ? HRV_OUTCOME_TOO_FEW : HRV_OUTCOME_DISABLED);
+  if (rmssd_ms > 0) {
+    s_diag.last_outcome = HRV_OUTCOME_LOGGED;
+  } else if (!prv_hrv_enabled()) {
+    s_diag.last_outcome = HRV_OUTCOME_DISABLED;
+  } else if (s_ppi_count == 0 && s_diag.hrv_zero_events > 0) {
+    // The sensor was talking to us the whole time; it just had nothing to
+    // report because it did not think it was on a wrist.
+    s_diag.last_outcome = HRV_OUTCOME_OFF_WRIST;
+  } else {
+    s_diag.last_outcome = HRV_OUTCOME_TOO_FEW;
+  }
   prv_diag_flush();
 
   if (rmssd_ms > 0) {
@@ -209,8 +218,8 @@ static void prv_stop_measurement(void) {
     prv_append_history((uint32_t)time(NULL), rmssd_ms);
     prv_log_measurement(rmssd_ms);
   } else {
-    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: only %u intervals",
-            (unsigned)s_ppi_count);
+    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: %u intervals, %u off-wrist",
+            (unsigned)s_ppi_count, (unsigned)s_diag.hrv_zero_events);
   }
 }
 
@@ -288,9 +297,13 @@ static void prv_health_handler(HealthEventType event, void *context) {
       s_diag.hrv_events++;
       if (s_measuring && s_ppi_count < PPI_BUFFER_SIZE) {
         uint16_t ppi = health_service_peek_hrv_ppi_ms();
-        // Zero means the sensor has no new reading, not an interval of zero.
         if (ppi > 0) {
           s_ppi_buffer[s_ppi_count++] = ppi;
+        } else {
+          // Counted, not just skipped: the driver only ever sends a zero from
+          // its off-wrist branch, so a run of these is the watch reporting that
+          // it is not in contact with the skin.
+          s_diag.hrv_zero_events++;
         }
       }
       break;

@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.3.0"
+#define APP_VERSION "1.4.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -295,6 +295,7 @@ static const char *prv_outcome_text(uint8_t outcome) {
   switch (outcome) {
     case HRV_OUTCOME_LOGGED:   return "recorded";
     case HRV_OUTCOME_TOO_FEW:  return "too few readings";
+    case HRV_OUTCOME_OFF_WRIST: return "not on wrist";
     case HRV_OUTCOME_DISABLED: return "switched off";
     default:                   return "none yet";
   }
@@ -333,6 +334,7 @@ static void prv_build_diag_text(void) {
            "\n"
            "SENSOR\n"
            "HRV readings: %u\n"
+           "Off-wrist: %u\n"
            "Period granted: %s\n"
            "\n"
            "MEASUREMENTS\n"
@@ -342,7 +344,7 @@ static void prv_build_diag_text(void) {
            "Readings used: %u",
            started, tick,
            sleep_seen, restful_seen, (unsigned)diag.sleep_events,
-           (unsigned)diag.hrv_events,
+           (unsigned)diag.hrv_events, (unsigned)diag.hrv_zero_events,
            // Never requested is not the same as refused, and saying "no" here
            // would point at the sensor when nothing had asked it for anything.
            (diag.episodes == 0) ? "not requested" : (diag.hrv_request_ok ? "yes" : "no"),

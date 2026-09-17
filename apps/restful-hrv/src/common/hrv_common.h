@@ -62,6 +62,7 @@ typedef enum {
   HRV_OUTCOME_LOGGED = 1,     // enough intervals; RMSSD recorded
   HRV_OUTCOME_TOO_FEW = 2,    // ran, but never got enough clean readings
   HRV_OUTCOME_DISABLED = 3,   // aborted because measuring was switched off
+  HRV_OUTCOME_OFF_WRIST = 4,  // the sensor reported readings, but all off-wrist
 } HrvOutcome;
 
 // Enough to tell the failure modes apart without a tethered computer: a worker
@@ -79,6 +80,15 @@ typedef struct __attribute__((__packed__)) {
   uint16_t last_sample_count;    // usable intervals in the last measurement
   uint8_t last_outcome;          // HrvOutcome
   uint8_t hrv_request_ok;        // did health_service_set_hrv_sample_period() succeed
+  // Appended rather than inserted, so the byte offsets above stay put.
+  //
+  // A peak-to-peak interval of zero does not mean "no reading yet", whatever
+  // the SDK documentation says. In the Pebble Time 2 driver (gh3x2x.c) a real
+  // reading skips any interval <= 0, and a zero is emitted from exactly one
+  // place: the branch taken when the watch believes it is not being worn. So a
+  // measurement full of zeroes is a wrist-contact problem, not a sparse signal,
+  // and saying so is far more use than "too few readings".
+  uint16_t hrv_zero_events;      // HRV events carrying no interval (off-wrist)
 } HrvDiagnostics;
 
 // Writing on every tick would mean hundreds of flash writes a night for a field
