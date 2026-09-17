@@ -323,6 +323,29 @@ enabled once for this repository (Settings → Pages → Source: `main` branch,
 Being a static file with no backend, it can be hosted anywhere, including
 opened straight from disk for development.
 
+## Deleting the measurements
+
+The settings page has a *Delete all measurements* button, behind a second tap.
+
+It has to go via the watch. The phone holds the durable copy, but the watch
+holds its own last 40, so clearing only the phone would achieve nothing - the
+next time you open the app on the watch it sends them straight back and the
+merge restores them. And the watch can only be told while the app is open on it,
+since a background worker has no AppMessage.
+
+So the button records the request, and:
+
+- if the watchapp is open, the request goes across immediately;
+- otherwise the page shows *Deletion pending* until you next open it, and
+  anything the watch sends in the meantime is ignored rather than merged back;
+- the phone drops its copy only once the watch confirms it has forgotten, so a
+  half-finished clear leaves both sides holding the data rather than one of them
+  losing it.
+
+The diagnostics counters are kept - they describe the worker's behaviour, not
+your data. Records already handed to DataLogging are not affected either;
+nothing on the page can reach those.
+
 ## Requirements
 
 - **Pebble Time 2.** HRV peak-to-peak intervals need firmware 4.32 or newer and

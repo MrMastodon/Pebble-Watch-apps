@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.5.2"
+#define APP_VERSION "1.6.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -22,7 +22,7 @@
 // The history is sent to the phone as one byte array, so the outbox has to fit
 // the whole thing plus dictionary overhead in a single message.
 #define OUTBOX_SIZE (HRV_HISTORY_BYTES + sizeof(HrvDiagnostics) + 96)
-#define INBOX_SIZE 64
+#define INBOX_SIZE 128
 
 // One retry, because the usual reason a send fails is that the phone connection
 // was not up yet when the app launched.
@@ -154,7 +154,34 @@ static void prv_initial_send(void *data) {
 // PebbleKit JS starts when this app starts, so at launch it is usually not
 // listening yet and an immediate send is simply lost. It announces itself
 // instead, and that is what triggers the transfer.
+// Wipes the stored measurements. The diagnostics counters are deliberately left
+// alone: they are about the worker's behaviour, not about your data, and they
+// are what any remaining investigation depends on.
+static void prv_clear_history(void) {
+  persist_delete(PERSIST_KEY_HISTORY);
+  persist_delete(PERSIST_KEY_HISTORY_COUNT);
+  s_history_count = 0;
+  APP_LOG(APP_LOG_LEVEL_INFO, "History cleared at the phone's request");
+}
+
+static void prv_confirm_history_cleared(void) {
+  DictionaryIterator *iter;
+  if (app_message_outbox_begin(&iter) != APP_MSG_OK) {
+    return;
+  }
+  // The phone waits for this before dropping its own copy, so a clear that only
+  // half happened leaves both sides holding the same data rather than one of
+  // them silently losing it.
+  dict_write_uint8(iter, MESSAGE_KEY_HistoryCleared, 1);
+  app_message_outbox_send();
+}
+
 static void prv_inbox_received_handler(DictionaryIterator *iter, void *context) {
+  if (dict_find(iter, MESSAGE_KEY_ClearHistory)) {
+    prv_clear_history();
+    prv_confirm_history_cleared();
+    return;
+  }
   if (dict_find(iter, MESSAGE_KEY_PhoneReady)) {
     s_send_retried = false;
     prv_send_history_to_phone();
@@ -165,7 +192,11 @@ static void prv_outbox_sent_handler(DictionaryIterator *iter, void *context) {
   // The only confirmation there is that the phone got the history. Without it,
   // "the settings page is empty" has no way of being told apart from "the
   // watch never managed to send anything".
-  APP_LOG(APP_LOG_LEVEL_INFO, "History sent to phone: %d measurements", s_history_count);
+  // Deliberately not "history sent": the same handler fires for the clear
+  // confirmation, and claiming a history delivery there is misleading during
+  // the one operation where the log matters most.
+  APP_LOG(APP_LOG_LEVEL_INFO, "Phone acknowledged; history now %d measurements",
+          s_history_count);
 }
 
 static void prv_outbox_failed_handler(DictionaryIterator *iter, AppMessageResult reason,

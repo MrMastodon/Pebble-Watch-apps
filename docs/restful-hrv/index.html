@@ -75,6 +75,10 @@
     text-decoration: none;
   }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: #c2410c; }
+  button.danger.armed { background: #c2410c; border-color: #c2410c; color: #fff; }
+  @media (prefers-color-scheme: dark) { button.danger { color: #fb923c; } }
+  .pending { background: var(--accent-soft); border-color: var(--accent); }
   button:active, a.btn:active { opacity: 0.7; }
   .note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
   .empty { text-align: center; color: var(--muted); padding: 28px 8px; }
@@ -292,6 +296,7 @@
   function render() {
     var params = parseHash();
     var records = decodeRecords(fromBase64Url(params.d || ''));
+    var clearing = params.clearing === '1';
     var status = null;
     try {
       if (params.s) { status = JSON.parse(decodeURIComponent(params.s)); }
@@ -304,6 +309,16 @@
       records.length
         ? 'Last synced from the watch ' + fmtAgo(updated) + '.'
         : 'Measurements taken during restful sleep.';
+
+    if (clearing) {
+      var pendingCard = el('div', 'card pending');
+      pendingCard.appendChild(el('strong', null, 'Deletion pending'));
+      pendingCard.appendChild(el('p', 'note',
+        'The watch has to be the one to forget, and it can only be told while ' +
+        'the app is open on it. Open Restful HRV on the watch and the ' +
+        'measurements go for good \u2014 until then nothing has been deleted.'));
+      content.appendChild(pendingCard);
+    }
 
     if (!records.length) {
       var empty = el('div', 'card');
@@ -409,6 +424,48 @@
     if (status) {
       content.appendChild(buildStatus(status));
     }
+
+    content.appendChild(buildDangerZone(records.length));
+  }
+
+  // Deliberately two taps rather than a confirm() dialog, which webviews inside
+  // host apps do not always show.
+  function buildDangerZone(count) {
+    var card = el('div', 'card');
+    card.appendChild(el('h2', null, 'Delete'));
+
+    var btn = el('button', 'danger', 'Delete all measurements');
+    var note = el('p', 'note',
+      'Clears the ' + count + ' measurement' + (count === 1 ? '' : 's') +
+      ' held here and on the watch. The diagnostics counters are kept. ' +
+      'Records already passed to Pebble\u2019s data logging are not affected - ' +
+      'nothing on this page can reach those.');
+
+    var armed = false;
+    btn.addEventListener('click', function () {
+      if (!armed) {
+        armed = true;
+        btn.classList.add('armed');
+        btn.textContent = 'Tap again to delete';
+        note.textContent = 'This cannot be undone.';
+        setTimeout(function () {
+          if (!armed) return;
+          armed = false;
+          btn.classList.remove('armed');
+          btn.textContent = 'Delete all measurements';
+        }, 5000);
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Deleting\u2026';
+      // Handing the request back to PebbleKit JS, which relays it to the watch.
+      document.location = 'pebblejs://close#' +
+        encodeURIComponent(JSON.stringify({ clear: true }));
+    });
+
+    card.appendChild(btn);
+    card.appendChild(note);
+    return card;
   }
 
   render();

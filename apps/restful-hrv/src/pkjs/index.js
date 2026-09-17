@@ -21,6 +21,9 @@ var CONFIG_URL = 'https://mrmastodon.github.io/Pebble-Watch-apps/restful-hrv/';
 var STORAGE_RECORDS = 'hrvRecords';
 var STORAGE_UPDATED = 'hrvUpdatedAt';
 var STORAGE_STATUS = 'hrvStatus';
+// A clear asked for while the watchapp was closed. The watch has to be the one
+// to forget, or it simply sends its copy back the next time it is opened.
+var STORAGE_PENDING_CLEAR = 'hrvPendingClear';
 
 // The phone is the durable copy. Removing the watchapp deletes its storage on
 // the watch outright, and the phone is what decides to remove it, so anything
@@ -103,6 +106,38 @@ function saveStatus(fields) {
   } catch (e) {
     log('could not cache status: ' + e);
   }
+}
+
+function isClearPending() {
+  try {
+    return localStorage.getItem(STORAGE_PENDING_CLEAR) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function setClearPending(pending) {
+  try {
+    if (pending) {
+      localStorage.setItem(STORAGE_PENDING_CLEAR, '1');
+    } else {
+      localStorage.removeItem(STORAGE_PENDING_CLEAR);
+    }
+  } catch (e) {
+    log('could not record the pending clear: ' + e);
+  }
+}
+
+function requestClear() {
+  setClearPending(true);
+  Pebble.sendAppMessage(
+    { ClearHistory: 1 },
+    function() { log('asked the watch to clear its history'); },
+    function() {
+      // Expected whenever the watchapp is not open. The request stays pending
+      // and is sent again the moment it announces itself.
+      log('watchapp not open; clear stays pending');
+    });
 }
 
 function loadStatus() {
@@ -202,6 +237,9 @@ Pebble.addEventListener('showConfiguration', function() {
     // The page is told when this cache was last refreshed, so it can say so
     // rather than silently presenting stale numbers as current.
     url = CONFIG_URL + '#v=1&updated=' + loadUpdatedAt() + '&d=' + encodeRecords(records);
+    if (isClearPending()) {
+      url += '&clearing=1';
+    }
     var status = loadStatus();
     if (status) {
       url += '&s=' + encodeURIComponent(JSON.stringify(status));
@@ -223,6 +261,12 @@ Pebble.addEventListener('ready', function() {
   // page, with no watchapp running to receive it. That send is expected to
   // fail, and must not take the rest of the script down with it.
   try {
+    if (isClearPending()) {
+      // Sent first, so the watch forgets before it has a chance to send its
+      // copy back and have it merged in again.
+      requestClear();
+      return;
+    }
     Pebble.sendAppMessage(
       { PhoneReady: 1 },
       function() { log('announced readiness to the watch'); },
@@ -236,6 +280,23 @@ Pebble.addEventListener('appmessage', function(e) {
   try {
     var payload = e && e.payload;
     if (!payload) {
+      return;
+    }
+
+    if (payload.HistoryCleared) {
+      // Only now, with the watch confirming it has forgotten, is it safe to
+      // drop this copy - otherwise a half-finished clear loses the data on the
+      // side that was keeping it.
+      saveRecords([]);
+      setClearPending(false);
+      log('history cleared on both sides');
+      return;
+    }
+
+    // Anything the watch sends between asking for a clear and it happening is
+    // the data being deleted; merging it back would undo the request.
+    if (isClearPending() && payload.HrvHistory) {
+      log('ignoring history while a clear is pending');
       return;
     }
 
@@ -262,8 +323,19 @@ Pebble.addEventListener('appmessage', function(e) {
   }
 });
 
-Pebble.addEventListener('webviewclosed', function() {
-  // The page is read-only - there is nothing to send back to the watch.
+Pebble.addEventListener('webviewclosed', function(e) {
+  // The only thing the page can ask for is a clear.
+  try {
+    if (!e || !e.response) {
+      return;
+    }
+    var response = JSON.parse(decodeURIComponent(e.response));
+    if (response && response.clear) {
+      requestClear();
+    }
+  } catch (err) {
+    log('could not read the settings page response: ' + err);
+  }
 });
 
 log('script loaded');
