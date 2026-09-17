@@ -63,6 +63,10 @@ typedef enum {
   HRV_OUTCOME_TOO_FEW = 2,    // ran, but never got enough clean readings
   HRV_OUTCOME_DISABLED = 3,   // aborted because measuring was switched off
   HRV_OUTCOME_NO_INTERVALS = 4,  // readings arrived, none carried an interval
+  // Written and flushed before the result is computed, so that a worker which
+  // dies doing the arithmetic leaves this behind instead of looking as though
+  // the measurement never ended. Seeing it persist is the bug report.
+  HRV_OUTCOME_COMPUTING = 5,
 } HrvOutcome;
 
 // Enough to tell the failure modes apart without a tethered computer: a worker

@@ -244,7 +244,7 @@
 
     var never = function (ts) { return ts ? fmtDateTime(ts) : 'never'; };
     var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings',
-                     3: 'switched off', 4: 'no intervals' };
+                     3: 'switched off', 4: 'no intervals', 5: 'died computing' };
 
     var rows = [
       ['Worker last alive', never(status.lastTickAt), !status.lastTickAt],
@@ -262,7 +262,7 @@
       ['Sample period granted', status.episodes === 0 ? 'not requested'
         : (status.hrvRequestOk ? 'yes' : 'no'), status.episodes > 0 && !status.hrvRequestOk],
       ['Last result', outcomes[status.lastOutcome] || 'unknown',
-       status.lastOutcome === 2 || status.lastOutcome === 4],
+       status.lastOutcome === 2 || status.lastOutcome === 4 || status.lastOutcome === 5],
       ['Readings used', String(status.lastSampleCount), false]
     ];
 

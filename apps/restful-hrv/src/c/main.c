@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.5.0"
+#define APP_VERSION "1.5.1"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -297,6 +297,7 @@ static const char *prv_outcome_text(uint8_t outcome) {
     case HRV_OUTCOME_LOGGED:   return "recorded";
     case HRV_OUTCOME_TOO_FEW:  return "too few readings";
     case HRV_OUTCOME_NO_INTERVALS: return "no intervals";
+    case HRV_OUTCOME_COMPUTING: return "died computing";
     case HRV_OUTCOME_DISABLED: return "switched off";
     default:                   return "none yet";
   }

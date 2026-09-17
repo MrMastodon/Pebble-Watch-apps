@@ -125,6 +125,7 @@ Each line separates one failure from another:
 | `While measuring` high, `Of those, empty` about the same | Readings arrived and every one came back without an interval. |
 | `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. |
 | `Last result: no intervals`, `Empty` counting up | The sensor was running and every reading came back without a heartbeat interval. See below. |
+| `Last result: died computing` | The worker did not survive turning the readings into a number. It should never say this; if it does, that is a bug worth reporting. |
 
 ### "HRV readings" all day is not the same as readings you can use
 
@@ -192,6 +193,23 @@ minutes, so a flag that flickers can still leave a continuous-looking graph
 while costing every HRV reading, which needs the flag set at that instant. The
 app counts empty readings separately and reports `no intervals` rather than
 `too few readings`, without claiming to know which of the two it is.
+
+### No floating point in the worker
+
+RMSSD is computed with 64-bit integers and an integer square root, not
+`sqrt()` on doubles. A background worker gets a much smaller stack than an app,
+and the emulator is more forgiving about that than the watch is - which is
+exactly the shape of bug that survives every test you run and then fails only on
+real hardware, silently, in the middle of the night.
+
+The arithmetic never needed a fraction: the inputs are whole milliseconds and so
+is the answer. The integer version agrees exactly with the floating-point one
+across several hundred generated cases, including the range extremes.
+
+For the same reason, the measurement's outcome is written to storage *before*
+the result is computed rather than after. If the worker dies doing the
+arithmetic, the status screen says `died computing` instead of looking
+indistinguishable from a measurement that simply never finished.
 
 ### Testing without waiting for a night
 

@@ -1,5 +1,4 @@
 #include <pebble_worker.h>
-#include <math.h>
 #include <string.h>
 
 #include "../../src/common/hrv_common.h"
@@ -87,35 +86,52 @@ static bool prv_hrv_enabled(void) {
   return persist_read_bool(PERSIST_KEY_HRV_ENABLED);
 }
 
+// Integer square root, rounded down. Newton's method converges in a handful of
+// iterations for values this size.
+static uint32_t prv_isqrt(uint64_t value) {
+  if (value == 0) {
+    return 0;
+  }
+  uint64_t x = value;
+  uint64_t y = (x + 1) / 2;
+  while (y < x) {
+    x = y;
+    y = (x + value / x) / 2;
+  }
+  return (uint32_t)x;
+}
+
 // RMSSD: the root mean square of successive differences between peak-to-peak
 // intervals, in whole milliseconds. Returns 0 when there is not enough data to
 // compute one, which the caller treats as "do not log".
+//
+// Deliberately integer-only. This runs in a background worker, which has a far
+// smaller stack than an app, and pulling softfloat and sqrt() in here is not
+// worth the risk for arithmetic that never needed a fraction: the inputs are
+// whole milliseconds and so is the answer.
 static uint32_t prv_compute_rmssd_ms(void) {
   if (s_ppi_count < MIN_VALID_SAMPLES) {
     return 0;
   }
 
-  double sum_sq_diff = 0;
-  int count = 0;
+  uint64_t sum_sq_diff = 0;
+  uint32_t count = 0;
   for (uint16_t i = 1; i < s_ppi_count; i++) {
-    // Widened before multiplying, not after: the difference of two 16-bit
-    // intervals squared does not fit in 32 bits at the top of the range.
-    double diff = (double)s_ppi_buffer[i] - (double)s_ppi_buffer[i - 1];
-    sum_sq_diff += diff * diff;
+    // 64-bit before squaring: the difference of two 16-bit intervals squared
+    // does not fit in 32 bits at the top of the range.
+    int64_t diff = (int64_t)s_ppi_buffer[i] - (int64_t)s_ppi_buffer[i - 1];
+    sum_sq_diff += (uint64_t)(diff * diff);
     count++;
   }
 
   if (count == 0) {
     return 0;
   }
-  return (uint32_t)(sqrt(sum_sq_diff / count) + 0.5);
+  // sqrt(4x) is 2*sqrt(x), so taking the root of four times the mean and
+  // halving it rounds to the nearest millisecond without any floating point.
+  return (prv_isqrt((sum_sq_diff * 4) / count) + 1) / 2;
 }
 
-// Appends a finished measurement to the history the app's own screen reads and
-// the phone's settings page is fed from. This is a second copy of what goes to
-// DataLogging, on purpose: DataLogging data is only reachable from a native
-// companion app, so without this the numbers would be invisible on the watch
-// that took them.
 static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms) {
   HrvRecord history[HRV_HISTORY_CAPACITY];
   int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
@@ -199,8 +215,14 @@ static void prv_stop_measurement(void) {
   health_service_set_hrv_sample_period(0);
   tick_timer_service_subscribe(IDLE_TICK_UNIT, prv_tick_handler);
 
+  // Recorded and flushed before the arithmetic rather than after it. A worker
+  // that dies computing the result then leaves behind how far it got, instead
+  // of looking exactly like a measurement that simply never ended - which is
+  // what hid this for three nights.
   s_diag.last_sample_count = s_ppi_count;
   s_diag.last_outcome_at = (uint32_t)time(NULL);
+  s_diag.last_outcome = HRV_OUTCOME_COMPUTING;
+  prv_diag_flush();
 
   uint32_t rmssd_ms = prv_compute_rmssd_ms();
   if (rmssd_ms > 0) {
