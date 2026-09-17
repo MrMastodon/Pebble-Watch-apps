@@ -202,9 +202,9 @@ static void prv_stop_measurement(void) {
   } else if (!prv_hrv_enabled()) {
     s_diag.last_outcome = HRV_OUTCOME_DISABLED;
   } else if (s_ppi_count == 0 && s_diag.hrv_zero_events > 0) {
-    // The sensor was talking to us the whole time; it just had nothing to
-    // report because it did not think it was on a wrist.
-    s_diag.last_outcome = HRV_OUTCOME_OFF_WRIST;
+    // The sensor was talking to us throughout and every reading came back
+    // empty. Distinct from a sparse signal, and worth saying so.
+    s_diag.last_outcome = HRV_OUTCOME_NO_INTERVALS;
   } else {
     s_diag.last_outcome = HRV_OUTCOME_TOO_FEW;
   }
@@ -300,9 +300,9 @@ static void prv_health_handler(HealthEventType event, void *context) {
         if (ppi > 0) {
           s_ppi_buffer[s_ppi_count++] = ppi;
         } else {
-          // Counted, not just skipped: the driver only ever sends a zero from
-          // its off-wrist branch, so a run of these is the watch reporting that
-          // it is not in contact with the skin.
+          // Counted, not just skipped: the driver only sends a zero from its
+          // not-being-worn branch, so the count says how much of the window the
+          // watch spent believing that - which is the measurement we lack.
           s_diag.hrv_zero_events++;
         }
       }

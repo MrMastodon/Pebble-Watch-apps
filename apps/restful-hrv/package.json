@@ -1,6 +1,6 @@
 {
   "name": "restful-hrv",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Measures HRV (RMSSD) automatically whenever the watch detects restful sleep, keeps the history on the watch, and shows it on the phone.",
   "author": "Pebble-Watch-apps contributors",
   "private": true,

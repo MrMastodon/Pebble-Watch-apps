@@ -62,7 +62,7 @@ typedef enum {
   HRV_OUTCOME_LOGGED = 1,     // enough intervals; RMSSD recorded
   HRV_OUTCOME_TOO_FEW = 2,    // ran, but never got enough clean readings
   HRV_OUTCOME_DISABLED = 3,   // aborted because measuring was switched off
-  HRV_OUTCOME_OFF_WRIST = 4,  // the sensor reported readings, but all off-wrist
+  HRV_OUTCOME_NO_INTERVALS = 4,  // readings arrived, none carried an interval
 } HrvOutcome;
 
 // Enough to tell the failure modes apart without a tethered computer: a worker
@@ -84,11 +84,14 @@ typedef struct __attribute__((__packed__)) {
   //
   // A peak-to-peak interval of zero does not mean "no reading yet", whatever
   // the SDK documentation says. In the Pebble Time 2 driver (gh3x2x.c) a real
-  // reading skips any interval <= 0, and a zero is emitted from exactly one
-  // place: the branch taken when the watch believes it is not being worn. So a
-  // measurement full of zeroes is a wrist-contact problem, not a sparse signal,
-  // and saying so is far more use than "too few readings".
-  uint16_t hrv_zero_events;      // HRV events carrying no interval (off-wrist)
+  // reading skips any interval <= 0, so the only code path that emits a zero is
+  // the one taken when the watch does not believe it is being worn.
+  //
+  // That is not the same as the watch being off your wrist. The BPM path gates
+  // on the same flag - a heart rate is only filled in when it is set - so a
+  // night with a heart rate graph is a night when it was set at least some of
+  // the time. Counting these separately is what will show whether it flickers.
+  uint16_t hrv_zero_events;      // HRV events that carried no interval
 } HrvDiagnostics;
 
 // Writing on every tick would mean hundreds of flash writes a night for a field

@@ -122,9 +122,9 @@ Each line separates one failure from another:
 | `Asleep` set, `Restful: never` | Sleep was tracked but never classified as restful. Nothing is wrong with the app; the trigger simply never occurred. |
 | `Episodes` above zero, `HRV readings: 0` | A measurement ran but the sensor produced no intervals at all. |
 | `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. |
-| `Last result: not on wrist`, `Off-wrist` counting up | The sensor was running but reported no skin contact, so every reading came back empty. Tighten the strap and wear the watch higher up the wrist. |
+| `Last result: no intervals`, `Empty` counting up | The sensor was running and every reading came back without a heartbeat interval. See below. |
 
-### A peak-to-peak interval of zero means off-wrist
+### A peak-to-peak interval of zero is not "no reading yet"
 
 The SDK documents `health_service_peek_hrv_ppi_ms()` as returning "0 if no
 reading is available yet", which hides what a zero actually is. In the Pebble
@@ -150,10 +150,26 @@ if (!HRM->state->is_wear) {
 }
 ```
 
-So a measurement full of zeroes is not a weak signal, it is no skin contact -
-and the watch will happily report thousands of "HRV readings" while it happens,
-which makes the sensor look like it is working perfectly. The app counts these
-separately and reports `not on wrist` rather than `too few readings`.
+So a measurement full of zeroes is not a weak signal - it is the watch not
+believing it is being worn, while still reporting thousands of "HRV readings",
+which makes the sensor look like it is working perfectly.
+
+That is **not** the same as the watch being off your wrist. The heart rate path
+in the same driver gates on the same flag:
+
+```c
+if (!HRM->state->is_wear) {
+  hrm_data.hrm_quality = HRMQuality_OffWrist;
+} else {
+  hrm_data.hrm_bpm = bpm;
+```
+
+so a night that produced a heart rate graph is a night when the flag was set at
+least some of the time. `HealthMetricHeartRateBPM` is averaged over whole
+minutes, so a flag that flickers can still leave a continuous-looking graph
+while costing every HRV reading, which needs the flag set at that instant. The
+app counts empty readings separately and reports `no intervals` rather than
+`too few readings`, without claiming to know which of the two it is.
 
 The counters are cumulative and survive reboots. They are reset by removing the
 app - see above - and they are mirrored to the phone's settings page, which is
