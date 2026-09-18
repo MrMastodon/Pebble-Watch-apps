@@ -254,6 +254,9 @@ Fixed parameters, the same for every measurement:
 | Interval buffer | 300, so the window stays the constraint, not the buffer |
 | Measurements per night | one per restful sleep episode |
 
+Verified on hardware: a night produced four restful sleep episodes and four
+recorded measurements, using 116 intervals for the last of them.
+
 A measurement that collects fewer than 10 intervals is **discarded, not logged**
 — usually a wrist position the sensor couldn't read through. A bad night shows
 up as a gap in the data rather than as a plausible-looking wrong number.

@@ -278,9 +278,15 @@
       dl.appendChild(el('dd', row[2] ? 'warn' : null, row[1]));
     });
     card.appendChild(dl);
-    var note = 'Sent from the watch the last time you opened the app. It explains ' +
-               'a night that measured nothing: no restful sleep means the trigger ' +
-               'never occurred.';
+    // The wording follows what actually happened. Explaining a failure under a
+    // night that worked reads as though something is wrong when nothing is.
+    var note = 'Sent from the watch the last time you opened the app.';
+    if (status.lastOutcome === 1) {
+      note += ' The last measurement completed and was recorded.';
+    } else {
+      note += ' It explains a night that measured nothing: no restful sleep ' +
+              'means the trigger never occurred.';
+    }
     if ((status.hrvZeroEvents || 0) > 0 && status.lastOutcome !== 1) {
       // Worth spelling out, because the watch is otherwise reporting thousands of
       // readings and it looks like the sensor is working perfectly.
