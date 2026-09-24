@@ -320,6 +320,15 @@ all. The watchapp pushes its whole history when you open it, and the settings
 page shows the most recent push — it tells you how long ago that was. Open the
 app on the watch to refresh it.
 
+**Downloading only works in a real browser.** The Pebble app's settings window
+cannot save files - on Android its WebView has no `DownloadListener`, so every
+download is silently dropped, and every link loads inside the same window. So
+inside the app the page offers *Copy as CSV* and *Copy link for browser* instead
+of a download button. The link carries the measurements in its fragment, so
+pasted into the browser's address bar it opens the same page, where *Download
+CSV* works. The bare address without the fragment is an empty page, since there
+is nothing on the server to load. Deleting only works from inside the app.
+
 **Nothing is uploaded anywhere.** The settings page is a static file with no
 backend, and the measurements travel to it in the URL fragment, which browsers
 never send to the server. The page makes no network requests of its own. Its

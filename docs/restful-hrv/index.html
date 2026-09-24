@@ -161,6 +161,43 @@
     return records;
   }
 
+  // True inside the Pebble mobile app's settings window. Its Android WebView
+  // has no DownloadListener, so every download there is silently dropped, and
+  // every link loads inside the same window - so neither a download nor
+  // "open in browser" can work from there. The Android app always injects a
+  // _localStorage bridge; the iOS one a webkit message handler; and any other
+  // Android WebView identifies itself with "; wv)" in its user agent.
+  function inPebbleApp() {
+    try {
+      if (window._localStorage) return true;
+      var h = window.webkit && window.webkit.messageHandlers;
+      if (h && h._PebbleConfigNative) return true;
+      return /; wv\)/.test(navigator.userAgent || '');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Shared by the copy buttons: clipboard API where it exists, a selected
+  // textarea where it does not.
+  function copyText(text, onDone) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); onDone(); } catch (e) { /* copied by hand */ }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onDone, fallback);
+    } else {
+      fallback();
+    }
+  }
+
   function median(values) {
     var sorted = values.slice().sort(function (a, b) { return a - b; });
     var mid = Math.floor(sorted.length / 2);
@@ -421,38 +458,45 @@
     var actions = el('div', 'card');
     var btns = el('div', 'btns');
 
+    var hosted = inPebbleApp();
+
     var copyBtn = el('button', 'primary', 'Copy as CSV');
     copyBtn.addEventListener('click', function () {
-      var done = function () {
+      copyText(csv, function () {
         copyBtn.textContent = 'Copied';
         setTimeout(function () { copyBtn.textContent = 'Copy as CSV'; }, 1600);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(csv).then(done, fallbackCopy);
-      } else {
-        fallbackCopy();
-      }
-      // Older mobile browsers have no clipboard API; select the text instead so
-      // the copy is still one long-press away.
-      function fallbackCopy() {
-        var ta = document.createElement('textarea');
-        ta.value = csv;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); done(); } catch (e) { /* user copies manually */ }
-        document.body.removeChild(ta);
-      }
+      });
     });
     btns.appendChild(copyBtn);
 
-    var dl = el('a', 'btn', 'Download CSV');
-    dl.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    dl.download = 'restful-hrv.csv';
-    btns.appendChild(dl);
+    if (hosted) {
+      // The measurements live in this page's own address, so copying it is how
+      // they reach a real browser - where downloading does work. The bare
+      // address without the fragment would open an empty page.
+      var linkBtn = el('button', null, 'Copy link for browser');
+      linkBtn.addEventListener('click', function () {
+        copyText(location.href, function () {
+          linkBtn.textContent = 'Link copied';
+          setTimeout(function () { linkBtn.textContent = 'Copy link for browser'; }, 1600);
+        });
+      });
+      btns.appendChild(linkBtn);
+    } else {
+      var dl = el('a', 'btn', 'Download CSV');
+      dl.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+      dl.download = 'restful-hrv.csv';
+      btns.appendChild(dl);
+    }
 
     actions.appendChild(btns);
+    if (hosted) {
+      actions.appendChild(el('p', 'note',
+        'The Pebble app cannot save files. Copy the CSV and paste it into ' +
+        'Notes or an email - or copy the link, paste it into your browser\u2019s ' +
+        'address bar, and download it from there. The link carries the ' +
+        'measurements themselves, so it will sit in that browser\u2019s history ' +
+        'like any other page.'));
+    }
     actions.appendChild(el('p', 'note',
       'This page runs entirely on your phone. The measurements travel in the ' +
       'URL fragment, which browsers never send to the server, and nothing here ' +
@@ -463,7 +507,17 @@
       content.appendChild(buildStatus(status));
     }
 
-    content.appendChild(buildDangerZone(records.length));
+    if (hosted) {
+      content.appendChild(buildDangerZone(records.length));
+    } else {
+      var away = el('div', 'card');
+      away.appendChild(el('h2', null, 'Delete'));
+      away.appendChild(el('p', 'note',
+        'Deleting measurements only works from the settings page inside the ' +
+        'Pebble app, since the watch has to be told to forget them too. This ' +
+        'is a copy opened in a browser.'));
+      content.appendChild(away);
+    }
   }
 
   // Deliberately two taps rather than a confirm() dialog, which webviews inside
