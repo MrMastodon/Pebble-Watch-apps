@@ -309,10 +309,39 @@ floor of 10.
 ## Seeing it on the phone
 
 Open the app's settings from the Pebble mobile app (the gear icon next to
-Restful HRV) and you get the stored measurements as a table and a chart, with
+Restful HRV) and you get the stored measurements summed up night by night, with
 buttons to copy or download them as CSV.
 
-Two things are worth knowing about how that works:
+**The page compares nights, not measurements.** A night can hold anything from
+one measurement to ten, so an average over measurements lets long nights count
+several times over, and a single bad episode can drag a whole night with it.
+Instead every night gets one value, the **median** of its measurements, and all
+the figures are built from those:
+
+| Figure | What it is | Shown from |
+|---|---|---|
+| Latest night | That night's median, and how far it is from the average of the up to 7 nights before it. The night itself is left out of that average, so it is never compared with itself. | 3 earlier nights |
+| 7 nights | Average of the last 7 nights with measurements | 3 nights |
+| 30 nights | Average of the last 30 nights, and the normal range: that average ± one standard deviation | 3 nights; range from 10 |
+| Stability | Coefficient of variation over the last 7 nights (standard deviation ÷ average). Lower means steadier nights. | 5 nights |
+
+Below those minimums the page says how many nights it has so far instead of
+showing a number. A standard deviation of three nights moves so much from one
+night to the next that it describes the sample, not you. Where a figure covers
+fewer nights than its window, it says how many.
+
+A night runs noon to noon in the phone's local time and is named after the
+morning it ends. So a measurement at 23:53 on Monday belongs to Tuesday's night.
+The chart places nights by date, so a night without a measurement shows up as a
+gap. It draws the 7-night average through the nights, and the normal range
+across the last 30 nights. The list under it has one row per night, and you
+tap a row to see that night's measurements. The CSV stays one row per
+measurement.
+
+These numbers only compare you with yourself. HRV differs a great deal from
+person to person, and none of this is a medical assessment.
+
+A few other things are worth knowing about how the page works:
 
 **The measurements only reach the phone while the watchapp is open.** Pebble
 background workers have no AppMessage, so the worker cannot talk to the phone at

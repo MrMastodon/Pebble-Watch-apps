@@ -14,6 +14,12 @@
     --line: #e2e5ea;
     --accent: #1f6fd0;
     --accent-soft: #e8f0fb;
+    /* Chart series, checked for colour-blind separation and contrast
+       against the card in each mode. The normal range is deliberately not a
+       hue: it is a reference, not a series. */
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --band: rgba(105, 112, 125, 0.14);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -24,6 +30,9 @@
       --line: #2c323b;
       --accent: #55aaff;
       --accent-soft: #1d2a3a;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --band: rgba(148, 156, 171, 0.16);
     }
   }
   * { box-sizing: border-box; }
@@ -45,20 +54,51 @@
     padding: 16px;
     margin-bottom: 16px;
   }
-  .stats { display: flex; gap: 10px; margin-bottom: 16px; }
-  .stat { flex: 1; background: var(--card); border: 1px solid var(--line);
-          border-radius: 12px; padding: 12px; text-align: center; }
-  .stat .v { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  @media (min-width: 600px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+  .stat { background: var(--card); border: 1px solid var(--line);
+          border-radius: 12px; padding: 12px; }
+  .stat .v { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; margin: 2px 0; }
   .stat .l { font-size: 11px; color: var(--muted); text-transform: uppercase;
-             letter-spacing: 0.06em; margin-top: 2px; }
-  svg { display: block; width: 100%; height: 140px; overflow: visible; }
+             letter-spacing: 0.06em; }
+  .stat .d { font-size: 12px; line-height: 1.35; color: var(--muted); }
+  .caveat { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 0 2px 16px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px;
+            color: var(--muted); margin: -2px 0 10px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+  .key { display: inline-block; flex: none; }
+  .key.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--series-1); }
+  .key.line { width: 14px; height: 2px; border-radius: 1px; background: var(--series-2); }
+  .key.band { width: 14px; height: 10px; border-radius: 2px; background: var(--band); }
+  .chart { position: relative; outline: none; touch-action: pan-y;
+           -webkit-user-select: none; user-select: none; }
+  .chart:focus-visible { box-shadow: 0 0 0 2px var(--accent); border-radius: 4px; }
+  .chart svg { display: block; overflow: visible; }
+  .chart .tick { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .tip { display: none; position: absolute; top: 0; pointer-events: none; z-index: 1;
+         background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+         padding: 7px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap;
+         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); font-variant-numeric: tabular-nums; }
+  .tip-date, .tip-foot { color: var(--muted); }
+  .tip-row { display: flex; align-items: center; gap: 6px; }
+  .tip-row strong { font-size: 14px; }
+  .tip-row span:last-child { color: var(--muted); }
+  details.night { border-top: 1px solid var(--line); }
+  details.night summary { display: flex; justify-content: space-between; align-items: center;
+                          gap: 12px; padding: 10px 0; cursor: pointer; list-style: none; }
+  details.night summary::-webkit-details-marker { display: none; }
+  details.night summary .when::before { content: '\25b8'; display: inline-block; width: 16px;
+                                        color: var(--muted); }
+  details.night[open] summary .when::before { content: '\25be'; }
+  details.night summary .sub { display: block; font-size: 12px; color: var(--muted);
+                               margin: 1px 0 0 16px; }
+  details.night summary .rmssd { font-weight: 600; font-variant-numeric: tabular-nums; }
+  details.night table { margin: 0 0 8px 16px; width: calc(100% - 16px); }
+  details.night td { font-size: 14px; padding: 7px 0; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;
-       text-transform: uppercase; letter-spacing: 0.06em; padding: 0 0 8px; }
-  th:last-child, td:last-child { text-align: right; }
+  td:last-child { text-align: right; }
   td { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
-  td.rmssd { font-weight: 600; }
-  td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+  td .sub { display: block; font-size: 12px; color: var(--muted); margin: 1px 0 0; }
   .btns { display: flex; gap: 10px; flex-wrap: wrap; }
   button, a.btn {
     flex: 1 1 140px;
@@ -198,11 +238,114 @@
     }
   }
 
+  /* stats:begin - no DOM in here, so it can be tested outside a browser */
+
+  // How many nights each figure needs before it is shown. Fewer than these
+  // and the number moves so much from one night to the next that it says
+  // more about the sample than about you.
+  var MIN_NIGHTS_AVERAGE = 3;
+  var MIN_NIGHTS_RANGE = 10;
+  var MIN_NIGHTS_CV = 5;
+  var WINDOW_SHORT = 7;
+  var WINDOW_LONG = 30;
+
+  // Exact, not rounded: an even number of measurements gives a half.
   function median(values) {
     var sorted = values.slice().sort(function (a, b) { return a - b; });
     var mid = Math.floor(sorted.length / 2);
-    return (sorted.length % 2) ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    return (sorted.length % 2) ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   }
+
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce(function (a, b) { return a + b; }, 0) / values.length;
+  }
+
+  // Sample standard deviation (n - 1): these nights are a sample of all
+  // your nights, not the whole of them.
+  function stdev(values) {
+    if (values.length < 2) return null;
+    var m = mean(values);
+    var sq = values.reduce(function (a, v) { return a + (v - m) * (v - m); }, 0);
+    return Math.sqrt(sq / (values.length - 1));
+  }
+
+  // The mean of each value and up to size - 1 before it; null where fewer
+  // than minCount values are available yet.
+  function rollingMean(values, size, minCount) {
+    return values.map(function (v, i) {
+      var slice = values.slice(Math.max(0, i - size + 1), i + 1);
+      return slice.length < minCount ? null : mean(slice);
+    });
+  }
+
+  // A night runs noon to noon in the phone's local time and is named after
+  // the morning it ends: 23:53 on Monday belongs to Tuesday's night. Worked
+  // out from the local clock rather than by adding twelve hours, which would
+  // land an hour off on the two nights a year the clocks change.
+  function wakeDateOf(ts) {
+    var d = new Date(ts * 1000);
+    var day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    if (d.getHours() >= 12) day.setDate(day.getDate() + 1);
+    return day;
+  }
+
+  function groupNights(records) {
+    var byKey = {};
+    var nights = [];
+    records.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
+      var date = wakeDateOf(r.t);
+      var key = date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+      if (!byKey[key]) {
+        byKey[key] = { key: key, date: date, measurements: [] };
+        nights.push(byKey[key]);
+      }
+      byKey[key].measurements.push(r);
+    });
+    nights.forEach(function (n) {
+      n.value = median(n.measurements.map(function (r) { return r.v; }));
+      // Records from before the artefact filter carry no count; a sum over
+      // them would claim nothing was removed when nothing was checked.
+      var unknown = n.measurements.some(function (r) { return r.r === null; });
+      n.rejected = unknown ? null : n.measurements.reduce(function (a, r) { return a + r.r; }, 0);
+    });
+    return nights.sort(function (a, b) { return a.key - b.key; });
+  }
+
+  function summarize(nights) {
+    var values = nights.map(function (n) { return n.value; });
+    var count = values.length;
+    // The latest night is compared with the nights before it, never with an
+    // average it is itself part of.
+    var prior = values.slice(Math.max(0, count - 1 - WINDOW_SHORT), Math.max(0, count - 1));
+    var recent = values.slice(-WINDOW_SHORT);
+    var longer = values.slice(-WINDOW_LONG);
+
+    var baseline = prior.length >= MIN_NIGHTS_AVERAGE ? mean(prior) : null;
+    var avgShort = recent.length >= MIN_NIGHTS_AVERAGE ? mean(recent) : null;
+    var avgLong = longer.length >= MIN_NIGHTS_AVERAGE ? mean(longer) : null;
+    var sdLong = longer.length >= MIN_NIGHTS_RANGE ? stdev(longer) : null;
+    var cv = null;
+    if (recent.length >= MIN_NIGHTS_CV) {
+      var m = mean(recent);
+      cv = m > 0 ? 100 * stdev(recent) / m : null;
+    }
+
+    return {
+      last: count ? nights[count - 1] : null,
+      baseline: baseline,
+      delta: (baseline === null) ? null : values[count - 1] - baseline,
+      avgShort: avgShort,
+      avgLong: avgLong,
+      sdLong: sdLong,
+      rangeLow: sdLong === null ? null : mean(longer) - sdLong,
+      rangeHigh: sdLong === null ? null : mean(longer) + sdLong,
+      cv: cv,
+      counts: { nights: count, prior: prior.length, recent: recent.length, longer: longer.length }
+    };
+  }
+
+  /* stats:end */
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }
 
@@ -228,64 +371,209 @@
     return n;
   }
 
-  function buildChart(records, width) {
-    // Oldest to newest, left to right.
-    var pts = records.slice().sort(function (a, b) { return a.t - b.t; });
-    // Drawn at the real pixel width rather than a fixed viewBox stretched to
-    // fit: a non-uniform stretch turns the data points into ellipses.
-    var W = Math.max(200, Math.round(width)), H = 140, padX = 8, padY = 14;
-    var values = pts.map(function (p) { return p.v; });
-    var lo = Math.min.apply(null, values);
-    var hi = Math.max.apply(null, values);
-    // A flat series would divide by zero and draw off the top of the box.
-    if (hi === lo) { hi = lo + 1; }
+  // Whole milliseconds for averages; a night's median keeps its half, since
+  // that is exactly what it is rather than a rounding.
+  function fmtMs(v) {
+    var r = Math.round(v * 10) / 10;
+    return (r % 1 ? r.toFixed(1) : String(r)) + ' ms';
+  }
 
-    var x = function (i) {
-      return pts.length === 1 ? W / 2
-           : padX + (i * (W - 2 * padX)) / (pts.length - 1);
+  function fmtNight(date) {
+    return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function fmtShortDate(date) {
+    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  }
+
+  // Three or four round numbers spanning the data, for the y axis.
+  function niceTicks(lo, hi) {
+    var steps = [1, 2, 5, 10, 20, 25, 50, 100, 200];
+    var step = steps[steps.length - 1];
+    for (var i = 0; i < steps.length; i++) {
+      if ((hi - lo) / steps[i] <= 4) { step = steps[i]; break; }
+    }
+    var from = Math.floor(lo / step) * step;
+    var to = Math.ceil(hi / step) * step;
+    if (to === from) to = from + step;
+    var ticks = [];
+    for (var t = from; t <= to; t += step) ticks.push(t);
+    return ticks;
+  }
+
+  function svgEl(name, attrs) {
+    var n = document.createElementNS('http://www.w3.org/2000/svg', name);
+    Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    return n;
+  }
+
+  // One point per night, the 7-night average through them, and the 30-night
+  // normal range behind them. Drawn at the holder's real pixel width rather
+  // than a fixed viewBox stretched to fit: a non-uniform stretch turns the
+  // points into ellipses.
+  function drawChart(holder, nights, summary) {
+    holder.innerHTML = '';
+    var W = Math.max(240, Math.round(holder.clientWidth));
+    var plotH = 150, axisH = 22, H = plotH + axisH;
+    var padL = 30, padR = 8, padT = 8;
+
+    var rolling = rollingMean(nights.map(function (n) { return n.value; }),
+                              WINDOW_SHORT, MIN_NIGHTS_AVERAGE);
+    // The range describes the last 30 nights, so it is only drawn across them.
+    var bandFrom = nights.length - summary.counts.longer;
+    var hasBand = summary.rangeLow !== null;
+
+    var ys = nights.map(function (n) { return n.value; })
+      .concat(rolling.filter(function (v) { return v !== null; }));
+    if (hasBand) ys.push(summary.rangeLow, summary.rangeHigh);
+    var ticks = niceTicks(Math.min.apply(null, ys), Math.max.apply(null, ys));
+    var lo = ticks[0], hi = ticks[ticks.length - 1];
+
+    // Placed by date, not by position in the list, so a night without a
+    // measurement shows up as a gap instead of being silently closed up.
+    var day0 = nights[0].date.getTime();
+    var dayOf = function (n) { return Math.round((n.date.getTime() - day0) / 86400000); };
+    var span = dayOf(nights[nights.length - 1]);
+    var x = function (n) {
+      return span === 0 ? padL + (W - padL - padR) / 2
+           : padL + 6 + (dayOf(n) * (W - padL - padR - 12)) / span;
     };
-    var y = function (v) { return H - padY - ((v - lo) * (H - 2 * padY)) / (hi - lo); };
+    var y = function (v) { return padT + (hi - v) * (plotH - padT) / (hi - lo); };
 
-    var ns = 'http://www.w3.org/2000/svg';
-    var svg = document.createElementNS(ns, 'svg');
-    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label',
-      'RMSSD over time, ranging from ' + lo + ' to ' + hi + ' milliseconds');
-
-    var d = '', area = '';
-    pts.forEach(function (p, i) {
-      d += (i ? ' L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1);
-    });
-    area = d + ' L' + x(pts.length - 1).toFixed(1) + ' ' + (H - padY) +
-               ' L' + x(0).toFixed(1) + ' ' + (H - padY) + ' Z';
-
-    var fill = document.createElementNS(ns, 'path');
-    fill.setAttribute('d', area);
-    fill.setAttribute('fill', 'var(--accent-soft)');
-    svg.appendChild(fill);
-
-    var line = document.createElementNS(ns, 'path');
-    line.setAttribute('d', d);
-    line.setAttribute('fill', 'none');
-    line.setAttribute('stroke', 'var(--accent)');
-    line.setAttribute('stroke-width', '2');
-    line.setAttribute('stroke-linejoin', 'round');
-    line.setAttribute('stroke-linecap', 'round');
-    line.setAttribute('vector-effect', 'non-scaling-stroke');
-    svg.appendChild(line);
-
-    pts.forEach(function (p, i) {
-      var c = document.createElementNS(ns, 'circle');
-      c.setAttribute('cx', x(i).toFixed(1));
-      c.setAttribute('cy', y(p.v).toFixed(1));
-      c.setAttribute('r', '2.5');
-      c.setAttribute('fill', 'var(--accent)');
-      c.setAttribute('vector-effect', 'non-scaling-stroke');
-      svg.appendChild(c);
+    var svg = svgEl('svg', {
+      viewBox: '0 0 ' + W + ' ' + H, width: W, height: H, role: 'img',
+      'aria-label': 'Nightly RMSSD for ' + nights.length + ' nights, from ' +
+        fmtShortDate(nights[0].date) + ' to ' + fmtShortDate(nights[nights.length - 1].date) +
+        '. The same values are listed night by night below.'
     });
 
-    return svg;
+    ticks.forEach(function (t) {
+      svg.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: y(t), y2: y(t),
+                                      stroke: 'var(--line)', 'stroke-width': 1,
+                                      'shape-rendering': 'crispEdges' }));
+      var label = svgEl('text', { x: padL - 6, y: y(t) + 4, 'text-anchor': 'end', 'class': 'tick' });
+      label.textContent = t;
+      svg.appendChild(label);
+    });
+
+    if (hasBand) {
+      var bx0 = x(nights[bandFrom]), bx1 = x(nights[nights.length - 1]);
+      svg.appendChild(svgEl('rect', {
+        x: Math.min(bx0, bx1) - 4, width: Math.abs(bx1 - bx0) + 8,
+        y: y(summary.rangeHigh), height: y(summary.rangeLow) - y(summary.rangeHigh),
+        fill: 'var(--band)', rx: 3
+      }));
+    }
+
+    var d = '';
+    nights.forEach(function (n, i) {
+      if (rolling[i] === null) return;
+      d += (d ? ' L' : 'M') + x(n).toFixed(1) + ' ' + y(rolling[i]).toFixed(1);
+    });
+    if (d.indexOf('L') > 0) {
+      svg.appendChild(svgEl('path', { d: d, fill: 'none', stroke: 'var(--series-2)',
+                                      'stroke-width': 2, 'stroke-linejoin': 'round',
+                                      'stroke-linecap': 'round' }));
+    }
+
+    nights.forEach(function (n) {
+      svg.appendChild(svgEl('circle', { cx: x(n).toFixed(1), cy: y(n.value).toFixed(1), r: 4,
+                                        fill: 'var(--series-1)', stroke: 'var(--card)',
+                                        'stroke-width': 2 }));
+    });
+
+    [[nights[0], 'start'], [nights[nights.length - 1], 'end']].forEach(function (pair, i) {
+      if (i === 1 && span === 0) return;
+      var label = svgEl('text', { x: x(pair[0]), y: H - 4,
+                                  'text-anchor': span === 0 ? 'middle' : pair[1], 'class': 'tick' });
+      label.textContent = fmtShortDate(pair[0].date);
+      svg.appendChild(label);
+    });
+
+    // Hover and touch: a crosshair that snaps to the nearest night, and one
+    // readout with everything at that night. It only repeats what the list
+    // below already says, so nothing is hidden behind it.
+    var cross = svgEl('line', { y1: padT, y2: plotH, stroke: 'var(--muted)', 'stroke-width': 1,
+                                visibility: 'hidden', 'shape-rendering': 'crispEdges' });
+    svg.appendChild(cross);
+    var ring = svgEl('circle', { r: 6, fill: 'none', stroke: 'var(--series-1)', 'stroke-width': 2,
+                                 visibility: 'hidden' });
+    svg.appendChild(ring);
+    holder.appendChild(svg);
+
+    var tip = el('div', 'tip');
+    tip.setAttribute('aria-hidden', 'true');
+    holder.appendChild(tip);
+
+    var shown = -1;
+    function show(i) {
+      shown = i;
+      var n = nights[i];
+      var cx = x(n);
+      cross.setAttribute('x1', cx);
+      cross.setAttribute('x2', cx);
+      cross.setAttribute('visibility', 'visible');
+      ring.setAttribute('cx', cx);
+      ring.setAttribute('cy', y(n.value));
+      ring.setAttribute('visibility', 'visible');
+
+      tip.innerHTML = '';
+      tip.appendChild(el('div', 'tip-date', fmtNight(n.date)));
+      var row = function (key, value, label) {
+        var r = el('div', 'tip-row');
+        r.appendChild(el('span', 'key ' + key));
+        r.appendChild(el('strong', null, value));
+        r.appendChild(el('span', null, label));
+        tip.appendChild(r);
+      };
+      row('dot', fmtMs(n.value), 'night median');
+      if (rolling[i] !== null) row('line', fmtMs(rolling[i]), '7-night average');
+      tip.appendChild(el('div', 'tip-foot', n.measurements.length + ' measurement' +
+                                            (n.measurements.length === 1 ? '' : 's')));
+      tip.style.display = 'block';
+      // Beside the crosshair on whichever side has room, and in the half of
+      // the plot the point is not in, so it never covers the night it describes.
+      var tw = tip.offsetWidth, th = tip.offsetHeight;
+      var left = cx > W / 2 ? cx - tw - 10 : cx + 10;
+      tip.style.left = Math.max(0, Math.min(W - tw, left)) + 'px';
+      tip.style.top = (y(n.value) < plotH / 2 ? Math.max(0, plotH - th) : 0) + 'px';
+    }
+    function hide() {
+      shown = -1;
+      cross.setAttribute('visibility', 'hidden');
+      ring.setAttribute('visibility', 'hidden');
+      tip.style.display = 'none';
+    }
+    function nearest(clientX) {
+      var rect = svg.getBoundingClientRect();
+      var px = (clientX - rect.left) * W / rect.width;
+      var best = 0;
+      nights.forEach(function (n, i) {
+        if (Math.abs(x(n) - px) < Math.abs(x(nights[best]) - px)) best = i;
+      });
+      return best;
+    }
+    svg.addEventListener('pointermove', function (e) { show(nearest(e.clientX)); });
+    svg.addEventListener('pointerdown', function (e) { show(nearest(e.clientX)); });
+    // A finger lifting also "leaves", which would hide the readout the moment
+    // it appeared; on touch it stays until the next tap elsewhere.
+    svg.addEventListener('pointerleave', function (e) { if (e.pointerType === 'mouse') hide(); });
+    holder.hideTip = hide;
+
+    holder.tabIndex = 0;
+    holder.onkeydown = function (e) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        var step = e.key === 'ArrowLeft' ? -1 : 1;
+        show(shown < 0 ? nights.length - 1 : Math.max(0, Math.min(nights.length - 1, shown + step)));
+        e.preventDefault();
+      } else if (e.key === 'Escape') {
+        hide();
+      }
+    };
+    holder.onfocus = function () { if (shown < 0) show(nights.length - 1); };
+    holder.onblur = hide;
+
+    return { band: hasBand, line: d.indexOf('L') > 0 };
   }
 
   function toCsv(records) {
@@ -358,6 +646,11 @@
     return card;
   }
 
+  // The chart currently on the page, kept so a change of width can redraw
+  // just the chart instead of the whole page - which would also fold up any
+  // night the reader had opened.
+  var chart = null;
+
   function render() {
     var params = parseHash();
     var records = decodeRecords(fromBase64Url(params.d || ''),
@@ -371,9 +664,11 @@
     var content = document.getElementById('content');
     content.innerHTML = '';
 
+    var nightCount = groupNights(records).length;
     document.getElementById('sub').textContent =
       records.length
-        ? records.length + ' measurement' + (records.length === 1 ? '' : 's') +
+        ? nightCount + ' night' + (nightCount === 1 ? '' : 's') + ' \u00b7 ' +
+          records.length + ' measurement' + (records.length === 1 ? '' : 's') +
           ' \u00b7 last synced from the watch ' + fmtAgo(updated) + '.'
         : 'Measurements taken during restful sleep.';
 
@@ -387,6 +682,7 @@
       content.appendChild(pendingCard);
     }
 
+    chart = null;
     if (!records.length) {
       var empty = el('div', 'card');
       var inner = el('div', 'empty');
@@ -403,56 +699,120 @@
       return;
     }
 
-    var newest = records.reduce(function (a, b) { return a.t > b.t ? a : b; });
-    var values = records.map(function (r) { return r.v; });
-    var mean = Math.round(values.reduce(function (a, b) { return a + b; }, 0) / values.length);
+    var nights = groupNights(records);
+    var sum = summarize(nights);
+    var c = sum.counts;
+    var nightsWord = function (n) { return n + ' night' + (n === 1 ? '' : 's'); };
+    var soFar = function (need, have) {
+      return 'after ' + nightsWord(need) + ' · ' + have + ' so far';
+    };
 
-    // Median beside the mean rather than instead of it. One bad measurement
-    // moves the mean a long way and the median hardly at all, so a gap between
-    // the two is itself worth seeing.
+    var tiles = [];
+    var d = sum.delta;
+    tiles.push(['Latest night', fmtMs(sum.last.value),
+      d === null
+        ? 'needs ' + MIN_NIGHTS_AVERAGE + ' earlier nights · ' + c.prior + ' so far'
+        : (Math.abs(d) < 0.5 ? 'same as' : (d > 0 ? '▲ ' : '▼ ') + Math.round(Math.abs(d)) + ' ms vs') +
+          ' previous ' + (c.prior === 1 ? 'night' : c.prior + ' nights'),
+      fmtNight(sum.last.date)]);
+    tiles.push(['7 nights', sum.avgShort === null ? '–' : fmtMs(Math.round(sum.avgShort)),
+      sum.avgShort === null ? soFar(MIN_NIGHTS_AVERAGE, c.recent)
+        : 'average' + (c.recent < WINDOW_SHORT ? ' of ' + c.recent : '')]);
+    tiles.push(['30 nights', sum.avgLong === null ? '–' : fmtMs(Math.round(sum.avgLong)),
+      sum.rangeLow === null
+        ? 'normal range ' + soFar(MIN_NIGHTS_RANGE, c.longer)
+        : 'normal ' + Math.round(sum.rangeLow) + '–' + Math.round(sum.rangeHigh) + ' ms' +
+          (c.longer < WINDOW_LONG ? ' · ' + c.longer + ' nights' : '')]);
+    tiles.push(['Stability', sum.cv === null ? '–' : Math.round(sum.cv) + ' %',
+      sum.cv === null ? soFar(MIN_NIGHTS_CV, c.recent)
+        : 'variation over ' + (c.recent === 1 ? 'night' : c.recent + ' nights') +
+          ' · lower is steadier']);
+
     var stats = el('div', 'stats');
-    [[newest.v + ' ms', 'Latest'], [median(values) + ' ms', 'Median'], [mean + ' ms', 'Average']]
-      .forEach(function (pair) {
-        var s = el('div', 'stat');
-        s.appendChild(el('div', 'v', pair[0]));
-        s.appendChild(el('div', 'l', pair[1]));
-        stats.appendChild(s);
-      });
+    tiles.forEach(function (t) {
+      var s = el('div', 'stat');
+      s.appendChild(el('div', 'l', t[0]));
+      s.appendChild(el('div', 'v', t[1]));
+      s.appendChild(el('div', 'd', t[2]));
+      if (t[3]) s.appendChild(el('div', 'd', t[3]));
+      stats.appendChild(s);
+    });
     content.appendChild(stats);
+    content.appendChild(el('p', 'caveat',
+      'Each night counts once, as the median of its measurements, so a night ' +
+      'with many measurements weighs no more than one with few. The comparison ' +
+      'is only ever with your own nights: HRV differs a great deal from person ' +
+      'to person, and none of this is a medical assessment.'));
 
     // Two points are a line segment, not a trend, and one is a dot in an empty
-    // box. Below three the table says everything the chart would.
-    if (records.length >= 3) {
+    // box. Below three the list says everything the chart would.
+    if (nights.length >= 3) {
       var chartCard = el('div', 'card');
+      chartCard.appendChild(el('h2', null, 'RMSSD per night'));
+      var legend = el('div', 'legend');
+      chartCard.appendChild(legend);
+      var holder = el('div', 'chart');
+      chartCard.appendChild(holder);
       content.appendChild(chartCard);
-      // Appended first so the card's real width is known before drawing.
-      chartCard.appendChild(buildChart(records, chartCard.clientWidth - 32));
+      // Drawn once the card is in the page, so its real width is known.
+      var drawn = drawChart(holder, nights, sum);
+      var keys = [['dot', 'Night (median)']];
+      if (drawn.line) keys.push(['line', '7-night average']);
+      if (drawn.band) keys.push(['band', 'Normal range, last ' + c.longer + ' nights']);
+      keys.forEach(function (k) {
+        var item = el('span', 'legend-item');
+        item.appendChild(el('span', 'key ' + k[0]));
+        item.appendChild(document.createTextNode(k[1]));
+        legend.appendChild(item);
+      });
+      chart = { holder: holder, nights: nights, summary: sum, width: holder.clientWidth };
+    } else {
+      chart = null;
     }
 
-    var tableCard = el('div', 'card');
-    var table = el('table');
-    var thead = el('thead');
-    var htr = el('tr');
-    htr.appendChild(el('th', null, 'When'));
-    htr.appendChild(el('th', null, 'RMSSD'));
-    thead.appendChild(htr);
-    table.appendChild(thead);
-
-    var tbody = el('tbody');
-    records.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (r) {
-      var tr = el('tr');
-      var when = el('td', null, fmtDateTime(r.t));
-      if (r.r) {
-        when.appendChild(el('span', 'sub',
-          r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed'));
+    var nightsCard = el('div', 'card');
+    nightsCard.appendChild(el('h2', null, 'Nights'));
+    nights.slice().reverse().forEach(function (n) {
+      var det = el('details', 'night');
+      var summ = el('summary');
+      var left = el('span', 'when', fmtNight(n.date));
+      var meta = n.measurements.length + ' measurement' + (n.measurements.length === 1 ? '' : 's');
+      if (n.rejected) {
+        meta += ' · ' + n.rejected + ' artefact' + (n.rejected === 1 ? '' : 's') + ' removed';
       }
-      tr.appendChild(when);
-      tr.appendChild(el('td', 'rmssd', r.v + ' ms'));
-      tbody.appendChild(tr);
+      left.appendChild(el('span', 'sub', meta));
+      summ.appendChild(left);
+      summ.appendChild(el('span', 'rmssd', fmtMs(n.value)));
+      det.appendChild(summ);
+
+      var list = el('table');
+      var tbody = el('tbody');
+      n.measurements.slice().reverse().forEach(function (r) {
+        var at = new Date(r.t * 1000);
+        var time = pad(at.getHours()) + ':' + pad(at.getMinutes());
+        // The evening before is a different date from the night's name.
+        if (at.getDate() !== n.date.getDate()) {
+          time = at.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + time;
+        }
+        var tr = el('tr');
+        var when = el('td', null, time);
+        if (r.r) {
+          when.appendChild(el('span', 'sub',
+            r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed'));
+        }
+        tr.appendChild(when);
+        tr.appendChild(el('td', null, r.v + ' ms'));
+        tbody.appendChild(tr);
+      });
+      list.appendChild(tbody);
+      det.appendChild(list);
+      nightsCard.appendChild(det);
     });
-    table.appendChild(tbody);
-    tableCard.appendChild(table);
-    content.appendChild(tableCard);
+    nightsCard.appendChild(el('p', 'note',
+      'A night is named after the morning it ends, and runs from noon to noon, ' +
+      'so a measurement just before midnight belongs to the next date. Tap a ' +
+      'night to see its measurements.'));
+    content.appendChild(nightsCard);
 
     var csv = toCsv(records);
     var actions = el('div', 'card');
@@ -563,11 +923,23 @@
   render();
   window.addEventListener('hashchange', render);
 
-  // The chart is sized in pixels, so a rotation needs a redraw.
+  // The chart is sized in pixels, so a rotation needs a redraw. Mobile
+  // browsers also fire resize when the address bar slides away, which changes
+  // only the height; that is ignored.
   var resizeTimer = null;
   window.addEventListener('resize', function () {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(render, 150);
+    resizeTimer = setTimeout(function () {
+      if (!chart || chart.holder.clientWidth === chart.width) return;
+      drawChart(chart.holder, chart.nights, chart.summary);
+      chart.width = chart.holder.clientWidth;
+    }, 150);
+  });
+
+  // On touch the readout stays up after the finger lifts; a tap anywhere
+  // else puts it away.
+  document.addEventListener('pointerdown', function (e) {
+    if (chart && chart.holder.hideTip && !chart.holder.contains(e.target)) chart.holder.hideTip();
   });
 })();
 </script>
