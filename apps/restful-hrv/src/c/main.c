@@ -10,7 +10,7 @@
 //
 // Two screens: the switch, and the history behind DOWN.
 
-#define APP_VERSION "1.6.0"
+#define APP_VERSION "1.7.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -228,7 +228,11 @@ static int16_t prv_menu_get_header_height(MenuLayer *menu_layer, uint16_t sectio
 static void prv_menu_draw_header(GContext *ctx, const Layer *cell_layer,
                                  uint16_t section_index, void *data) {
   static char header[24];
-  snprintf(header, sizeof(header), "Last %d measurements", s_history_count);
+  if (s_history_count == 1) {
+    snprintf(header, sizeof(header), "1 measurement");
+  } else {
+    snprintf(header, sizeof(header), "Last %d measurements", s_history_count);
+  }
   menu_cell_basic_header_draw(ctx, cell_layer, header);
 }
 
@@ -244,7 +248,12 @@ static void prv_menu_draw_row(GContext *ctx, const Layer *cell_layer,
   static char title[24];
   static char subtitle[32];
 
-  snprintf(title, sizeof(title), "%u ms", (unsigned)record->rmssd_ms);
+  if (record->rejected > 0) {
+    snprintf(title, sizeof(title), "%u ms  (-%u)", (unsigned)record->rmssd_ms,
+             (unsigned)record->rejected);
+  } else {
+    snprintf(title, sizeof(title), "%u ms", (unsigned)record->rmssd_ms);
+  }
 
   time_t when = (time_t)record->timestamp;
   struct tm *local = localtime(&when);
@@ -377,7 +386,8 @@ static void prv_build_diag_text(void) {
            "Episodes: %u\n"
            "Last result: %s\n"
            "Last at: %s\n"
-           "Readings used: %u",
+           "Readings used: %u\n"
+           "Artefacts removed: %u",
            started, tick,
            sleep_seen, restful_seen, (unsigned)diag.sleep_events,
            (unsigned)diag.hrv_events, (unsigned)diag.hrv_events_measuring,
@@ -387,7 +397,7 @@ static void prv_build_diag_text(void) {
            (diag.episodes == 0) ? "not requested" : (diag.hrv_request_ok ? "yes" : "no"),
            (unsigned)diag.episodes,
            prv_outcome_text(diag.last_outcome), outcome_at,
-           (unsigned)diag.last_sample_count);
+           (unsigned)diag.last_sample_count, (unsigned)diag.last_rejected);
 }
 
 static void prv_diag_refresh(void *data);
@@ -600,6 +610,11 @@ static void prv_window_unload(Window *window) {
 }
 
 static void prv_init(void) {
+  // Records in the old six-byte layout; see PERSIST_KEY_HISTORY. Deleted here
+  // as well as in the worker, since either may be the first to run.
+  persist_delete(PERSIST_KEY_HISTORY_V1);
+  persist_delete(PERSIST_KEY_HISTORY_COUNT_V1);
+
   s_enabled = prv_read_enabled();
   prv_load_history();
 

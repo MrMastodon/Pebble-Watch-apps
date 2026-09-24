@@ -50,8 +50,9 @@ The history screen lists what has been measured, newest at the top:
   ──────────────────────
 ```
 
-The watch keeps the last 40 measurements — roughly a fortnight at two or three
-restful sleep episodes a night. Times follow the watch's own 12/24-hour setting.
+The watch keeps the last 32 measurements — about a week and a half at three or
+four restful sleep episodes a night. A value that needed cleaning shows how many
+intervals were removed, e.g. `29 ms (-2)`. Times follow the watch's own 12/24-hour setting.
 
 The first time you turn it on, the watch may ask whether this app's background
 worker may replace whichever one is currently installed — Pebble allows only one
@@ -81,7 +82,7 @@ reading `ON` again: that is the default when the key does not exist.
 
 This is why the app pushes everything to the phone whenever you open it, and why
 PebbleKit JS **merges** rather than replaces what it holds. The watch keeps the
-last 40 measurements and can lose them at any moment; the phone keeps up to 500
+last 32 measurements and can lose them at any moment; the phone keeps up to 500
 and is what survives. An incoming batch is treated as new information about the
 past, never as the whole of it - replacing would discard everything older than
 whatever the watch happened to be holding at the time.
@@ -194,6 +195,45 @@ while costing every HRV reading, which needs the flag set at that instant. The
 app counts empty readings separately and reports `no intervals` rather than
 `too few readings`, without claiming to know which of the two it is.
 
+### Artefact filtering
+
+A single beat the sensor misses doubles one interval, and the two huge
+successive differences around it dominate the entire sum of squares. In a
+simulated calm window of about 30 ms:
+
+| Window | RMSSD |
+|---|---|
+| clean | 29 ms |
+| one missed beat | 135 ms |
+| two missed beats | 188 ms |
+| one false extra peak | 73 ms |
+
+Unfiltered, that is where the occasional 120-180 ms value in an otherwise
+25-50 ms series comes from. So before RMSSD is computed, any interval that
+differs by more than 20 % from the previous *accepted* interval is rejected (the
+Malik criterion), and successive differences are taken between the intervals
+that remain. In the same simulation that returns 29 ms in all three failure
+cases, and leaves the clean window untouched - beat-to-beat changes in restful
+sleep are nowhere near 20 %.
+
+Two details matter:
+
+- The comparison is against the last accepted interval, not simply the previous
+  one. Otherwise the normal interval after a doubled one would be rejected too,
+  for differing from the error.
+- The reference starts at the first interval that agrees with its successor, so
+  a window that happens to open on an artefact does not measure everything
+  against it and discard the whole window.
+
+The number of rejected intervals is kept with every measurement, shown in the
+history and on the settings page, and included in the CSV and in DataLogging.
+The ten-interval floor applies after filtering: ten intervals of which eight
+were artefacts is not a measurement.
+
+Measurements taken before filtering was added are not comparable with those
+taken after, so the upgrade starts a new series: the watch's old history is
+removed, and the phone keeps its old cache untouched but no longer shows it.
+
 ### The buffer must not be the binding constraint
 
 The interval buffer holds 300 readings, not one per second of the window. Real
@@ -250,7 +290,8 @@ Fixed parameters, the same for every measurement:
 | Trigger | entering `HealthActivityRestfulSleep` |
 | Duration | 120 seconds |
 | Sample period | 1 second (the shortest the SDK accepts) |
-| Minimum usable readings | 10 peak-to-peak intervals |
+| Artefact filter | an interval is dropped if it differs from the previous accepted one by more than 20 % |
+| Minimum usable readings | 10 peak-to-peak intervals, counted after filtering |
 | Interval buffer | 300, so the window stays the constraint, not the buffer |
 | Measurements per night | one per restful sleep episode |
 
@@ -287,16 +328,19 @@ source is in [`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
 ## Getting the raw data
 
 Alongside the on-watch history, each completed measurement is appended to a
-DataLogging session as one record of two 4-byte little-endian unsigned integers:
+DataLogging session as one record of three 4-byte little-endian unsigned
+integers:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 4 | UTC timestamp when the measurement ended |
-| 4 | 4 | RMSSD in whole milliseconds |
+| 4 | 4 | RMSSD in whole milliseconds, after artefact filtering |
+| 8 | 4 | intervals rejected as artefacts |
 
-The session is tagged `0x48525631` (ASCII `HRV1`), with `DATA_LOGGING_UINT` and
-an item length of 4. Unlike the on-watch history, this is not capped at 40
-records.
+The session is tagged `0x48525632` (ASCII `HRV2`), with `DATA_LOGGING_UINT` and
+an item length of 4. Earlier builds logged two-item records without filtering
+under `HRV1`; the tag changed so the two computations cannot be mistaken for
+one another. Unlike the on-watch history, this is not capped.
 
 DataLogging data **cannot be read by PebbleKit JS** — only by a native companion
 app built with PebbleKit Android or iOS, or over the Developer Connection:
@@ -309,12 +353,12 @@ pebble data-logging download hrv.bin --session-id <id> --phone <ip>
 ```python
 import struct, datetime
 data = open("hrv.bin", "rb").read()
-for ts, rmssd in struct.iter_unpack("<II", data):
-    print(datetime.datetime.fromtimestamp(ts), rmssd, "ms")
+for ts, rmssd, rejected in struct.iter_unpack("<III", data):
+    print(datetime.datetime.fromtimestamp(ts), rmssd, "ms", rejected, "rejected")
 ```
 
 For everyday use the settings page above is the easier route; this one exists
-for anyone who wants every measurement ever taken rather than the last 40.
+for anyone who wants every measurement ever taken rather than the last 32.
 
 ## Hosting the settings page
 
@@ -331,7 +375,7 @@ opened straight from disk for development.
 The settings page has a *Delete all measurements* button, behind a second tap.
 
 It has to go via the watch. The phone holds the durable copy, but the watch
-holds its own last 40, so clearing only the phone would achieve nothing - the
+holds its own last 32, so clearing only the phone would achieve nothing - the
 next time you open the app on the watch it sends them straight back and the
 merge restores them. And the watch can only be told while the app is open on it,
 since a background worker has no AppMessage.

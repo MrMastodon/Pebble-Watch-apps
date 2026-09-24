@@ -98,30 +98,74 @@ static uint32_t prv_isqrt(uint64_t value) {
   return (uint32_t)x;
 }
 
+static bool prv_within_tolerance(uint16_t value, uint16_t reference) {
+  uint32_t diff = (value > reference) ? (uint32_t)(value - reference)
+                                      : (uint32_t)(reference - value);
+  // diff / reference <= pct / 100, kept in integers.
+  return diff * 100 <= (uint32_t)reference * HRV_ARTEFACT_TOLERANCE_PCT;
+}
+
 // RMSSD: the root mean square of successive differences between peak-to-peak
-// intervals, in whole milliseconds. Returns 0 when there is not enough data to
-// compute one, which the caller treats as "do not log".
+// intervals, in whole milliseconds, after artefact filtering. Returns 0 when
+// too few intervals survive to compute one, which the caller treats as "do not
+// log". The number rejected is reported either way.
+//
+// Each interval is compared with the last *accepted* one, not simply the one
+// before it - otherwise a doubled interval would be rejected and then its
+// normal successor rejected too, for differing from the error. Successive
+// differences are then taken between accepted intervals, across any gap a
+// rejection left.
+//
+// The reference starts at the first interval that agrees with its successor,
+// so a window that happens to open on an artefact does not measure everything
+// against it and throw the whole window away.
 //
 // Deliberately integer-only. This runs in a background worker, which has a far
 // smaller stack than an app, and pulling softfloat and sqrt() in here is not
 // worth the risk for arithmetic that never needed a fraction: the inputs are
 // whole milliseconds and so is the answer.
-static uint32_t prv_compute_rmssd_ms(void) {
-  if (s_ppi_count < MIN_VALID_SAMPLES) {
+static uint32_t prv_compute_rmssd_ms(uint16_t *rejected_out) {
+  const uint16_t n = s_ppi_count;
+  *rejected_out = 0;
+  if (n < MIN_VALID_SAMPLES) {
     return 0;
   }
 
-  uint64_t sum_sq_diff = 0;
-  uint32_t count = 0;
-  for (uint16_t i = 1; i < s_ppi_count; i++) {
-    // 64-bit before squaring: the difference of two 16-bit intervals squared
-    // does not fit in 32 bits at the top of the range.
-    int64_t diff = (int64_t)s_ppi_buffer[i] - (int64_t)s_ppi_buffer[i - 1];
-    sum_sq_diff += (uint64_t)(diff * diff);
-    count++;
+  uint16_t start = 0;
+  while ((start + 1 < n) &&
+         !prv_within_tolerance(s_ppi_buffer[start + 1], s_ppi_buffer[start])) {
+    start++;
+  }
+  if (start + 1 >= n) {
+    // No two consecutive intervals agree anywhere in the window.
+    *rejected_out = n;
+    return 0;
   }
 
-  if (count == 0) {
+  uint16_t rejected = start;
+  uint16_t accepted = 1;
+  uint16_t last = s_ppi_buffer[start];
+  uint64_t sum_sq_diff = 0;
+  uint32_t count = 0;
+  for (uint16_t i = start + 1; i < n; i++) {
+    const uint16_t ppi = s_ppi_buffer[i];
+    if (!prv_within_tolerance(ppi, last)) {
+      rejected++;
+      continue;
+    }
+    // 64-bit before squaring: the difference of two 16-bit intervals squared
+    // does not fit in 32 bits at the top of the range.
+    const int64_t diff = (int64_t)ppi - (int64_t)last;
+    sum_sq_diff += (uint64_t)(diff * diff);
+    count++;
+    accepted++;
+    last = ppi;
+  }
+
+  *rejected_out = rejected;
+  // The sample floor applies to what survived the filter, not to what arrived:
+  // ten intervals of which eight were artefacts is not a measurement.
+  if (accepted < MIN_VALID_SAMPLES || count == 0) {
     return 0;
   }
   // sqrt(4x) is 2*sqrt(x), so taking the root of four times the mean and
@@ -129,8 +173,13 @@ static uint32_t prv_compute_rmssd_ms(void) {
   return (prv_isqrt((sum_sq_diff * 4) / count) + 1) / 2;
 }
 
-static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms) {
-  HrvRecord history[HRV_HISTORY_CAPACITY];
+// Static rather than on the stack. A worker's stack is small enough that a
+// floating-point sqrt() once killed it outright; a 256-byte local array is the
+// same kind of risk for no benefit.
+static HrvRecord s_history_scratch[HRV_HISTORY_CAPACITY];
+
+static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms, uint16_t rejected) {
+  HrvRecord *history = s_history_scratch;
   int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
       ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
 
@@ -140,7 +189,7 @@ static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms) {
     count = 0;
   }
   if (count > 0) {
-    int read = persist_read_data(PERSIST_KEY_HISTORY, history, sizeof(history));
+    int read = persist_read_data(PERSIST_KEY_HISTORY, history, sizeof(s_history_scratch));
     if (read < (int)(count * sizeof(HrvRecord))) {
       count = 0;
     }
@@ -155,21 +204,23 @@ static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms) {
   // Clamped rather than truncated: a wrapped 16-bit value would read as a
   // plausible small number instead of an obviously pegged one.
   history[count].rmssd_ms = (rmssd_ms > UINT16_MAX) ? UINT16_MAX : (uint16_t)rmssd_ms;
+  history[count].rejected = rejected;
   count++;
 
   persist_write_data(PERSIST_KEY_HISTORY, history, count * sizeof(HrvRecord));
   persist_write_int(PERSIST_KEY_HISTORY_COUNT, count);
 }
 
-static void prv_log_measurement(uint32_t rmssd_ms) {
+static void prv_log_measurement(uint32_t rmssd_ms, uint16_t rejected) {
   if (!s_log_session) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "HRV result dropped: no logging session");
     return;
   }
-  // Two items rather than one, so each RMSSD arrives on the phone with the time
-  // it was taken - DataLogging itself does not timestamp records.
-  uint32_t record[2] = { (uint32_t)time(NULL), rmssd_ms };
-  DataLoggingResult result = data_logging_log(s_log_session, record, 2);
+  // The timestamp rides along because DataLogging does not timestamp records,
+  // and the rejection count so a reader can judge how much cleaning a value
+  // needed.
+  uint32_t record[3] = { (uint32_t)time(NULL), rmssd_ms, rejected };
+  DataLoggingResult result = data_logging_log(s_log_session, record, 3);
   // Worth saying out loud: a full or closed session means the night's numbers
   // are being silently thrown away, and nothing else would reveal that.
   if (result != DATA_LOGGING_SUCCESS) {
@@ -221,7 +272,9 @@ static void prv_stop_measurement(void) {
   s_diag.last_outcome = HRV_OUTCOME_COMPUTING;
   prv_diag_flush();
 
-  uint32_t rmssd_ms = prv_compute_rmssd_ms();
+  uint16_t rejected = 0;
+  uint32_t rmssd_ms = prv_compute_rmssd_ms(&rejected);
+  s_diag.last_rejected = rejected;
   if (rmssd_ms > 0) {
     s_diag.last_outcome = HRV_OUTCOME_LOGGED;
   } else if (!prv_hrv_enabled()) {
@@ -236,15 +289,16 @@ static void prv_stop_measurement(void) {
   prv_diag_flush();
 
   if (rmssd_ms > 0) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement complete: %u ms from %u intervals",
-            (unsigned)rmssd_ms, (unsigned)s_ppi_count);
+    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement complete: %u ms from %u intervals, "
+            "%u rejected", (unsigned)rmssd_ms, (unsigned)s_ppi_count, (unsigned)rejected);
     // History first: it is the copy the user can actually reach from the watch,
     // so it should not depend on DataLogging having room.
-    prv_append_history((uint32_t)time(NULL), rmssd_ms);
-    prv_log_measurement(rmssd_ms);
+    prv_append_history((uint32_t)time(NULL), rmssd_ms, rejected);
+    prv_log_measurement(rmssd_ms, rejected);
   } else {
-    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: %u intervals, %u off-wrist",
-            (unsigned)s_ppi_count, (unsigned)s_diag.hrv_zero_events);
+    APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: %u intervals, %u rejected, "
+            "%u off-wrist", (unsigned)s_ppi_count, (unsigned)rejected,
+            (unsigned)s_diag.hrv_zero_events);
   }
 }
 
@@ -367,6 +421,10 @@ static void prv_health_handler(HealthEventType event, void *context) {
 }
 
 static void prv_init(void) {
+  // Records in the old six-byte layout; see PERSIST_KEY_HISTORY.
+  persist_delete(PERSIST_KEY_HISTORY_V1);
+  persist_delete(PERSIST_KEY_HISTORY_COUNT_V1);
+
   prv_diag_load();
   s_diag.worker_started_at = (uint32_t)time(NULL);
   s_diag.last_tick_at = s_diag.worker_started_at;

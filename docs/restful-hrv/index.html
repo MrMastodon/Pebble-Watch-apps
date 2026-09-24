@@ -58,6 +58,7 @@
   th:last-child, td:last-child { text-align: right; }
   td { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
   td.rmssd { font-weight: 600; }
+  td .sub { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
   .btns { display: flex; gap: 10px; flex-wrap: wrap; }
   button, a.btn {
     flex: 1 1 140px;
@@ -106,7 +107,13 @@
   // The watch's history arrives in the URL fragment rather than the query
   // string: fragments are never sent to the server, so these numbers never
   // leave the phone. This page has no backend and makes no network requests.
-  var RECORD_BYTES = 6;
+  //
+  // Records are six bytes wide from watch builds before artefact filtering
+  // (v=1: timestamp, RMSSD) and eight after (v=2: plus the number of intervals
+  // the filter rejected). This page is served to every installed version, so
+  // it reads whichever it is given rather than assuming the newest.
+  var RECORD_BYTES_V1 = 6;
+  var RECORD_BYTES_V2 = 8;
 
   function parseHash() {
     var out = {};
@@ -136,16 +143,28 @@
     return bytes;
   }
 
-  function decodeRecords(bytes) {
+  function decodeRecords(bytes, width) {
     var records = [];
-    for (var i = 0; i + RECORD_BYTES <= bytes.length; i += RECORD_BYTES) {
+    for (var i = 0; i + width <= bytes.length; i += width) {
       // Same signed-integer trap as on the watch side: the top byte is added,
       // not OR-ed, so timestamps past 2038 stay positive.
       var ts = ((bytes[i]) | (bytes[i + 1] << 8) | (bytes[i + 2] << 16)) >>> 0;
       ts += bytes[i + 3] * 0x1000000;
-      records.push({ t: ts, v: bytes[i + 4] | (bytes[i + 5] << 8) });
+      records.push({
+        t: ts,
+        v: bytes[i + 4] | (bytes[i + 5] << 8),
+        // null, not 0, when the record predates the filter: "nothing was
+        // rejected" and "nothing was checked" are different statements.
+        r: (width >= 8) ? (bytes[i + 6] | (bytes[i + 7] << 8)) : null
+      });
     }
     return records;
+  }
+
+  function median(values) {
+    var sorted = values.slice().sort(function (a, b) { return a - b; });
+    var mid = Math.floor(sorted.length / 2);
+    return (sorted.length % 2) ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
   }
 
   function pad(n) { return (n < 10 ? '0' : '') + n; }
@@ -233,9 +252,10 @@
   }
 
   function toCsv(records) {
-    var rows = ['timestamp,iso_time,rmssd_ms'];
+    var rows = ['timestamp,iso_time,rmssd_ms,artefacts_removed'];
     records.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
-      rows.push(r.t + ',' + new Date(r.t * 1000).toISOString() + ',' + r.v);
+      rows.push(r.t + ',' + new Date(r.t * 1000).toISOString() + ',' + r.v + ',' +
+                (r.r === null ? '' : r.r));
     });
     return rows.join('\n') + '\n';
   }
@@ -267,7 +287,9 @@
         : (status.hrvRequestOk ? 'yes' : 'no'), status.episodes > 0 && !status.hrvRequestOk],
       ['Last result', outcomes[status.lastOutcome] || 'unknown',
        status.lastOutcome === 2 || status.lastOutcome === 4 || status.lastOutcome === 5],
-      ['Readings used', String(status.lastSampleCount), false]
+      ['Readings used', String(status.lastSampleCount), false],
+      ['Artefacts removed', status.lastRejected === null || status.lastRejected === undefined
+        ? 'not recorded' : String(status.lastRejected), false]
     ];
 
     var dl = el('dl');
@@ -301,7 +323,8 @@
 
   function render() {
     var params = parseHash();
-    var records = decodeRecords(fromBase64Url(params.d || ''));
+    var records = decodeRecords(fromBase64Url(params.d || ''),
+                                params.v === '2' ? RECORD_BYTES_V2 : RECORD_BYTES_V1);
     var clearing = params.clearing === '1';
     var status = null;
     try {
@@ -313,7 +336,8 @@
 
     document.getElementById('sub').textContent =
       records.length
-        ? 'Last synced from the watch ' + fmtAgo(updated) + '.'
+        ? records.length + ' measurement' + (records.length === 1 ? '' : 's') +
+          ' \u00b7 last synced from the watch ' + fmtAgo(updated) + '.'
         : 'Measurements taken during restful sleep.';
 
     if (clearing) {
@@ -346,8 +370,11 @@
     var values = records.map(function (r) { return r.v; });
     var mean = Math.round(values.reduce(function (a, b) { return a + b; }, 0) / values.length);
 
+    // Median beside the mean rather than instead of it. One bad measurement
+    // moves the mean a long way and the median hardly at all, so a gap between
+    // the two is itself worth seeing.
     var stats = el('div', 'stats');
-    [[newest.v + ' ms', 'Latest'], [mean + ' ms', 'Average'], [String(records.length), 'Readings']]
+    [[newest.v + ' ms', 'Latest'], [median(values) + ' ms', 'Median'], [mean + ' ms', 'Average']]
       .forEach(function (pair) {
         var s = el('div', 'stat');
         s.appendChild(el('div', 'v', pair[0]));
@@ -377,7 +404,12 @@
     var tbody = el('tbody');
     records.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (r) {
       var tr = el('tr');
-      tr.appendChild(el('td', null, fmtDateTime(r.t)));
+      var when = el('td', null, fmtDateTime(r.t));
+      if (r.r) {
+        when.appendChild(el('span', 'sub',
+          r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed'));
+      }
+      tr.appendChild(when);
       tr.appendChild(el('td', 'rmssd', r.v + ' ms'));
       tbody.appendChild(tr);
     });

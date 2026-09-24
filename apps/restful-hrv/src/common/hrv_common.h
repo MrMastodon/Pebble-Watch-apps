@@ -15,18 +15,30 @@
 
 // The measurement history: a packed array of HrvRecord, oldest first, and the
 // number of records currently in it.
-#define PERSIST_KEY_HISTORY 2
-#define PERSIST_KEY_HISTORY_COUNT 3
+//
+// Moved from keys 2 and 3 when records grew from six bytes to eight. Reading
+// the old array with the new layout would produce plausible-looking garbage,
+// so the old keys are deleted rather than migrated - they held values computed
+// without artefact filtering, which are not comparable with the new ones
+// anyway.
+#define PERSIST_KEY_HISTORY 5
+#define PERSIST_KEY_HISTORY_COUNT 6
+#define PERSIST_KEY_HISTORY_V1 2
+#define PERSIST_KEY_HISTORY_COUNT_V1 3
 
 // Evidence about what the worker saw overnight. APP_LOG only exists while a
 // computer is tethered, so without this a night that produced nothing is
 // completely silent about why.
 #define PERSIST_KEY_DIAG 4
 
-// DataLogging tag for the measurement log, ASCII "HRV1". Each record is two
-// 4-byte unsigned ints: the UTC timestamp the measurement ended, then RMSSD in
-// whole milliseconds.
-#define HRV_LOG_TAG 0x48525631
+// DataLogging tag for the measurement log, ASCII "HRV2". Each record is three
+// 4-byte unsigned ints: the UTC timestamp the measurement ended, RMSSD in whole
+// milliseconds, and how many intervals were rejected as artefacts.
+//
+// "HRV1" held two items and RMSSD computed without artefact filtering. A new
+// tag rather than the old one with an extra item, so nothing reading the log
+// can mistake one computation for the other.
+#define HRV_LOG_TAG 0x48525632
 
 // How long one measurement runs, and how often the sensor is asked for a new
 // peak-to-peak interval. Both are deliberately fixed rather than adaptive: a
@@ -46,19 +58,31 @@
 // happens during restful sleep, for 600 bytes of a worker that has room.
 #define HRV_PPI_CAPACITY 300
 
+// Artefact filter: an interval is rejected when it differs from the previous
+// accepted one by more than this percentage (the Malik criterion, 20 %).
+//
+// Without it, a single beat the sensor misses doubles one interval, and the
+// two huge successive differences around it dominate the whole sum of squares:
+// a calm window of about 30 ms reads as well over 100. Beat-to-beat changes
+// during restful sleep are nowhere near 20 %, so genuine variation is not
+// touched - only the mechanical errors.
+#define HRV_ARTEFACT_TOLERANCE_PCT 20
+
 // One stored measurement. Six bytes rather than eight: RMSSD is tens to low
 // hundreds of milliseconds, so 16 bits is ample, and the saving is what lets a
 // useful number of records fit in a single persist value.
 typedef struct __attribute__((__packed__)) {
   uint32_t timestamp;  // UTC, when the measurement ended
-  uint16_t rmssd_ms;   // RMSSD, whole milliseconds
+  uint16_t rmssd_ms;   // RMSSD, whole milliseconds, after artefact filtering
+  uint16_t rejected;   // intervals the artefact filter threw away
 } HrvRecord;
 
 // A persist value tops out at PERSIST_DATA_MAX_LENGTH (256 bytes), so the whole
 // history fits in one key at this size - no splitting across keys, no partial
-// writes to reason about. At two or three restful sleep episodes a night this
-// is roughly a fortnight.
-#define HRV_HISTORY_CAPACITY 40
+// writes to reason about. 32 eight-byte records fill it exactly: about a week
+// and a half at three or four restful sleep episodes a night. The phone keeps
+// far more, so this is only the watch's own recent view.
+#define HRV_HISTORY_CAPACITY 32
 
 // Oldest first, so the newest record is always the last one. That costs a
 // memmove per measurement, which happens a handful of times a night, and buys
@@ -114,6 +138,7 @@ typedef struct __attribute__((__packed__)) {
   // day, whoever caused it, and says nothing about our own measurement windows.
   // This is the one that does.
   uint16_t hrv_events_measuring;  // HRV events that arrived during a measurement
+  uint16_t last_rejected;         // intervals the artefact filter removed, last time
 } HrvDiagnostics;
 
 // Messages from the app to the worker. Only one so far: run a measurement now,

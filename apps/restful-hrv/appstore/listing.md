@@ -44,14 +44,14 @@ average. Readings the sensor couldn't get a clean look at are thrown away
 rather than logged, so a bad night shows up as a gap instead of a wrong
 number.
 
-The watch keeps your last 40 measurements and shows them in the app, newest
+The watch keeps your last 32 measurements and shows them in the app, newest
 first. Open the app's settings on your phone and you get the same numbers as
 a table and a chart, with a button to copy or download them as CSV. That page
 is a static file with no backend - the measurements travel to it in the URL
 fragment, which browsers never send to a server, so nothing is uploaded
 anywhere.
 
-Every measurement is also written to Pebble's data logging, tagged HRV1, for
+Every measurement is also written to Pebble's data logging, tagged HRV2, for
 anyone who wants to pull the full record off the watch themselves.
 
 Requires a Pebble Time 2 - HRV peak-to-peak intervals need firmware 4.32 or

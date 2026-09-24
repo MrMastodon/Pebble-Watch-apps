@@ -18,7 +18,11 @@
 
 var CONFIG_URL = 'https://mrmastodon.github.io/Pebble-Watch-apps/restful-hrv/';
 
-var STORAGE_RECORDS = 'hrvRecords';
+// A new key, not the old one: records here were [timestamp, rmssd] and are now
+// [timestamp, rmssd, rejected], computed with artefact filtering. The old cache
+// is left where it was rather than deleted, so nothing is destroyed that the
+// user did not ask to delete - it is simply no longer shown.
+var STORAGE_RECORDS = 'hrvRecords2';
 var STORAGE_UPDATED = 'hrvUpdatedAt';
 var STORAGE_STATUS = 'hrvStatus';
 // A clear asked for while the watchapp was closed. The watch has to be the one
@@ -32,8 +36,9 @@ var STORAGE_PENDING_CLEAR = 'hrvPendingClear';
 var MAX_CACHED_RECORDS = 500;
 
 // Matches HrvRecord in src/common/hrv_common.h: a 4-byte little-endian UTC
-// timestamp followed by a 2-byte little-endian RMSSD in milliseconds.
-var RECORD_BYTES = 6;
+// timestamp, a 2-byte RMSSD in milliseconds, and a 2-byte count of intervals
+// the artefact filter rejected.
+var RECORD_BYTES = 8;
 
 function log(message) {
   // Visible in `pebble logs --phone <ip>`, which is the only way to see what
@@ -54,7 +59,8 @@ function decodeRecords(bytes) {
                      ((bytes[i + 2] & 0xff) << 16)) >>> 0;
     timestamp += (bytes[i + 3] & 0xff) * 0x1000000;
     var rmssd = (bytes[i + 4] & 0xff) | ((bytes[i + 5] & 0xff) << 8);
-    records.push([timestamp, rmssd]);
+    var rejected = (bytes[i + 6] & 0xff) | ((bytes[i + 7] & 0xff) << 8);
+    records.push([timestamp, rmssd, rejected]);
   }
   return records;
 }
@@ -68,20 +74,21 @@ function mergeRecords(incoming) {
   var existing = loadRecords();
   var i;
   for (i = 0; i < existing.length; i++) {
-    byTime[existing[i][0]] = existing[i][1];
+    byTime[existing[i][0]] = existing[i];
   }
   var added = 0;
   for (i = 0; i < incoming.length; i++) {
     if (!(incoming[i][0] in byTime)) {
       added++;
     }
-    byTime[incoming[i][0]] = incoming[i][1];
+    byTime[incoming[i][0]] = incoming[i];
   }
 
   var merged = [];
   for (var key in byTime) {
     if (byTime.hasOwnProperty(key)) {
-      merged.push([parseInt(key, 10), byTime[key]]);
+      var r = byTime[key];
+      merged.push([r[0], r[1], r[2] || 0]);
     }
   }
   merged.sort(function(a, b) { return a[0] - b[0]; });
@@ -176,7 +183,8 @@ function decodeStatus(bytes) {
     hrvRequestOk: bytes[29] & 0xff,
     // Appended to the struct later; tolerate a watch still sending the old one.
     hrvZeroEvents: (bytes.length >= 32) ? u16(30) : 0,
-    hrvEventsMeasuring: (bytes.length >= 34) ? u16(32) : null
+    hrvEventsMeasuring: (bytes.length >= 34) ? u16(32) : null,
+    lastRejected: (bytes.length >= 36) ? u16(34) : null
   };
 }
 
@@ -218,12 +226,15 @@ function encodeRecords(records) {
   for (var i = 0; i < records.length; i++) {
     var timestamp = records[i][0];
     var rmssd = records[i][1];
+    var rejected = records[i][2] || 0;
     bytes.push(timestamp & 0xff,
                (timestamp >>> 8) & 0xff,
                (timestamp >>> 16) & 0xff,
                (timestamp >>> 24) & 0xff,
                rmssd & 0xff,
-               (rmssd >>> 8) & 0xff);
+               (rmssd >>> 8) & 0xff,
+               rejected & 0xff,
+               (rejected >>> 8) & 0xff);
   }
   return toBase64Url(bytes);
 }
@@ -236,7 +247,7 @@ Pebble.addEventListener('showConfiguration', function() {
     var records = loadRecords();
     // The page is told when this cache was last refreshed, so it can say so
     // rather than silently presenting stale numbers as current.
-    url = CONFIG_URL + '#v=1&updated=' + loadUpdatedAt() + '&d=' + encodeRecords(records);
+    url = CONFIG_URL + '#v=2&updated=' + loadUpdatedAt() + '&d=' + encodeRecords(records);
     if (isClearPending()) {
       url += '&clearing=1';
     }
