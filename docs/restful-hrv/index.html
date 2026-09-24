@@ -122,6 +122,9 @@
   .pending { background: var(--accent-soft); border-color: var(--accent); }
   button:active, a.btn:active { opacity: 0.7; }
   .note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
+  .steps { color: var(--muted); font-size: 13px; margin: 6px 0 0; padding-left: 20px; }
+  .steps li { margin-top: 4px; }
+  .note strong, .steps strong { color: var(--ink); font-weight: 600; }
   .empty { text-align: center; color: var(--muted); padding: 28px 8px; }
   .empty strong { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
   h2 { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase;
@@ -850,12 +853,34 @@
 
     actions.appendChild(btns);
     if (hosted) {
+      // Built from parts rather than innerHTML so the button names can be
+      // bold without any markup being parsed.
+      var step = function (parts) {
+        var li = el('li');
+        parts.forEach(function (part) {
+          li.appendChild(typeof part === 'string' ? document.createTextNode(part)
+                                                  : el('strong', null, part[0]));
+        });
+        return li;
+      };
       actions.appendChild(el('p', 'note',
-        'The Pebble app cannot save files. Copy the CSV and paste it into ' +
-        'Notes or an email - or copy the link, paste it into your browser\u2019s ' +
-        'address bar, and download it from there. The link carries the ' +
-        'measurements themselves, so it will sit in that browser\u2019s history ' +
-        'like any other page.'));
+        'The Pebble app can\u2019t save files. Two ways to get the data out:'));
+      var steps = el('ul', 'steps');
+      steps.appendChild(step([['Copy as CSV'],
+        ', then paste it into Notes, a spreadsheet or an email.']));
+      steps.appendChild(step([['Copy link for browser'],
+        ', then paste it into your browser\u2019s address bar. The same page ' +
+        'opens there, with a ', ['Download CSV'], ' button that saves the file.']));
+      actions.appendChild(steps);
+      // The number is the length of the very link the button copies, so it
+      // is right whatever the history holds.
+      actions.appendChild(el('p', 'note',
+        'The link is long \u2013 ' + location.href.length.toLocaleString() +
+        ' characters now, up to about 6,000 with a full history \u2013 because ' +
+        'the measurements travel inside it. Paste it straight into the address ' +
+        'bar: chat and notes apps can cut a long link short or break it across ' +
+        'lines, and a cut link opens with measurements missing. Like any page, ' +
+        'it stays in the browser\u2019s history.'));
     }
     actions.appendChild(el('p', 'note',
       'This page runs entirely on your phone. The measurements travel in the ' +

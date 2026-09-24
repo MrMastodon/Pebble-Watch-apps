@@ -358,6 +358,13 @@ pasted into the browser's address bar it opens the same page, where *Download
 CSV* works. The bare address without the fragment is an empty page, since there
 is nothing on the server to load. Deleting only works from inside the app.
 
+The link is long, because the measurements are inside it: a little under 1,000
+characters for a week, and up to about 6,000 with the 500 measurements the
+phone keeps. The page says how long it is right now. Paste it straight into the
+address bar. Chat and notes apps can cut a long link short or break it across
+lines, and a cut link opens the page with measurements missing, without any
+error.
+
 **Nothing is uploaded anywhere.** The settings page is a static file with no
 backend, and the measurements travel to it in the URL fragment, which browsers
 never send to the server. The page makes no network requests of its own. Its
