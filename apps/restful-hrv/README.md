@@ -365,10 +365,14 @@ address bar. Chat and notes apps can cut a long link short or break it across
 lines, and a cut link opens the page with measurements missing, without any
 error.
 
-**Nothing is uploaded anywhere.** The settings page is a static file with no
-backend, and the measurements travel to it in the URL fragment, which browsers
-never send to the server. The page makes no network requests of its own. Its
-source is in [`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
+**Your measurements are never sent to GitHub.** The settings page is a static
+file hosted on GitHub Pages, with no backend. The measurements travel to it in
+the URL fragment, the part after the `#`, which browsers never send to any
+server. GitHub sees that the page was opened (IP address, time, browser), as any
+website would, but not the measurements. The page loads nothing else and makes
+no network requests of its own. The flip side is that the link itself holds the
+measurements, so anyone it is shared with can see them. The page's source is in
+[`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
 
 ## Getting the raw data
 
