@@ -23,16 +23,20 @@ worker that keeps running with the app closed.
     Background: running
 
    SELECT to turn off
-   DOWN for history
+     UP measure now
+      DOWN history
 
-           v1.1
+          v1.8.0
 ```
 
 - **SELECT** — turn measuring on or off. The setting is remembered across
   reboots and reinstalls.
+- **UP** — *Measure now*: a two-minute measurement straight away, without
+  waiting for sleep. See below.
 - **DOWN** — the measurement history, newest first.
-- **UP** — what the worker saw overnight, for when nothing was measured. Holding
-  SELECT there runs a measurement immediately, without waiting for sleep.
+- **Hold UP** — the worker's own counters, for working out why a night measured
+  nothing. Deliberately not listed on screen; see
+  [When nothing gets measured](#when-nothing-gets-measured).
 - **Background** — whether the worker is actually running. Turning measuring on
   launches it; turning measuring off stops it, so it isn't holding the watch's
   single background-app slot for nothing.
@@ -52,7 +56,34 @@ The history screen lists what has been measured, newest at the top:
 
 The watch keeps the last 32 measurements — about a week and a half at three or
 four restful sleep episodes a night. A value that needed cleaning shows how many
-intervals were removed, e.g. `29 ms (-2)`. Times follow the watch's own 12/24-hour setting.
+intervals were removed, e.g. `29 ms (-2)`. A Measure now is labelled `manual`.
+Times follow the watch's own 12/24-hour setting.
+
+### Measure now
+
+UP opens a screen that asks you to sit or lie still with the strap snug, and
+SELECT starts the measurement. It is the same two-minute window, at the same
+sample rate, as a night measurement:
+
+- **While it runs**, a ring empties as the two minutes pass, with the time left
+  in the middle and the number of heartbeats collected below it. If the sensor
+  sends only empty readings, it says `No heartbeat signal – check the strap`
+  instead.
+- **When it ends**, the watch vibrates and shows the RMSSD, or why there was
+  none.
+- **BACK during the countdown** asks `Cancel measurement?`. BACK again cancels
+  it and stores nothing, and SELECT carries on. Leaving the app any other way
+  lets the background worker finish, and the result still lands in the history.
+- **Measuring must be switched on**, since the worker is what measures. If it
+  is off, the screen says so and starts nothing.
+- **If a restful sleep measurement is already running,** the screen says so
+  instead of starting a second one.
+
+A Measure now is taken awake, which is a different state from restful sleep, so
+it is kept apart. It is stored with a flag (see
+[Getting the raw data](#getting-the-raw-data)), labelled `manual` on the watch,
+and listed in its own *Measure now* section on the settings page. It is never
+counted in a night's value, the averages, the normal range or the chart.
 
 The first time you turn it on, the watch may ask whether this app's background
 worker may replace whichever one is currently installed — Pebble allows only one
@@ -94,7 +125,8 @@ sideloaded.
 
 A night that produces no measurements is otherwise completely silent about why,
 since `APP_LOG` only exists while a computer is tethered. The **UP** button
-shows what the worker actually saw:
+shows what the worker actually saw when you **hold** it (a short press is
+Measure now):
 
 ```
    WORKER
@@ -261,17 +293,12 @@ indistinguishable from a measurement that simply never finished.
 
 ### Testing without waiting for a night
 
-Holding SELECT on the status screen asks the worker to run a measurement now.
-It is the same code on the same sensor subscription as a real one - the only
-difference is that it is not cancelled by you being awake - and the counters
-above it update every second while it runs.
-
-This exists because debugging against real sleep costs a night per attempt,
-which is far too slow to find anything out. Sit still for two minutes with the
-watch on and watch `While measuring` and `Of those, empty` move.
-
-A manual measurement is logged and appears in the history like any other, so
-expect test values among your real ones.
+Measure now (UP) runs the same code on the same sensor subscription as a real
+measurement. The only difference is that it is not cancelled by you being
+awake. Debugging against real sleep costs a night per attempt, which is far too
+slow to find anything out, so this is the quick way to see whether the sensor
+delivers heartbeat intervals at all. Afterwards, `While measuring` and
+`Of those, empty` on the hidden status screen show what arrived.
 
 The counters are cumulative and survive reboots. They are reset by removing the
 app - see above - and they are mirrored to the phone's settings page, which is
@@ -342,6 +369,10 @@ across the last 30 nights. The list under it has one row per night, and you
 tap a row to see that night's measurements. The CSV stays one row per
 measurement.
 
+Measure now readings are listed separately under the nights and left out of
+all of this. The worker's counters (the same as on the watch's hidden status
+screen) sit in a folded *Diagnostics* section near the bottom.
+
 These numbers only compare you with yourself. HRV differs a great deal from
 person to person, and none of this is a medical assessment.
 
@@ -388,7 +419,7 @@ integers:
 |---|---|---|
 | 0 | 4 | UTC timestamp when the measurement ended |
 | 4 | 4 | RMSSD in whole milliseconds, after artefact filtering |
-| 8 | 4 | intervals rejected as artefacts |
+| 8 | 4 | intervals rejected as artefacts; bit 16 set for a Measure now |
 
 The session is tagged `0x48525632` (ASCII `HRV2`), with `DATA_LOGGING_UINT` and
 an item length of 4. Earlier builds logged two-item records without filtering

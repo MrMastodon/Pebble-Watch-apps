@@ -37,7 +37,9 @@ var MAX_CACHED_RECORDS = 500;
 
 // Matches HrvRecord in src/common/hrv_common.h: a 4-byte little-endian UTC
 // timestamp, a 2-byte RMSSD in milliseconds, and a 2-byte count of intervals
-// the artefact filter rejected.
+// the artefact filter rejected. The top bit of that count marks a Measure now
+// (HRV_REJECTED_MANUAL_FLAG); it is carried through untouched, and the settings
+// page is what separates it from the count.
 var RECORD_BYTES = 8;
 
 function log(message) {

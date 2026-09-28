@@ -133,6 +133,13 @@
   .pending { background: var(--accent-soft); border-color: var(--accent); }
   button:active, a.btn:active { opacity: 0.7; }
   .note { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
+  details.diag > summary { font-size: 12px; color: var(--muted); font-weight: 600;
+                           text-transform: uppercase; letter-spacing: 0.06em;
+                           cursor: pointer; list-style: none; }
+  details.diag > summary::-webkit-details-marker { display: none; }
+  details.diag > summary::before { content: '\25b8'; display: inline-block; width: 16px; }
+  details.diag[open] > summary::before { content: '\25be'; }
+  details.diag[open] > summary { margin-bottom: 12px; }
   .steps { color: var(--muted); font-size: 13px; margin: 6px 0 0; padding-left: 20px; }
   .steps li { margin-top: 4px; }
   .note strong, .steps strong { color: var(--ink); font-weight: 600; }
@@ -208,8 +215,10 @@
         t: ts,
         v: bytes[i + 4] | (bytes[i + 5] << 8),
         // null, not 0, when the record predates the filter: "nothing was
-        // rejected" and "nothing was checked" are different statements.
-        r: (width >= 8) ? (bytes[i + 6] | (bytes[i + 7] << 8)) : null
+        // rejected" and "nothing was checked" are different statements. The
+        // top bit is not part of the count: it marks a Measure now.
+        r: (width >= 8) ? (bytes[i + 6] | ((bytes[i + 7] & 0x7f) << 8)) : null,
+        manual: width >= 8 && (bytes[i + 7] & 0x80) !== 0
       });
     }
     return records;
@@ -304,10 +313,13 @@
     return day;
   }
 
+  // Measure now readings are left out: they are taken awake, at any hour, and
+  // would otherwise count towards whichever night the clock put them in.
   function groupNights(records) {
     var byKey = {};
     var nights = [];
-    records.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
+    records.filter(function (r) { return !r.manual; })
+           .sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
       var date = wakeDateOf(r.t);
       var key = date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
       if (!byKey[key]) {
@@ -597,23 +609,52 @@
   }
 
   function toCsv(records) {
-    var rows = ['timestamp,iso_time,rmssd_ms,artefacts_removed'];
+    var rows = ['timestamp,iso_time,rmssd_ms,artefacts_removed,manual'];
     records.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (r) {
       rows.push(r.t + ',' + new Date(r.t * 1000).toISOString() + ',' + r.v + ',' +
-                (r.r === null ? '' : r.r));
+                (r.r === null ? '' : r.r) + ',' + (r.manual ? 1 : 0));
     });
     return rows.join('\n') + '\n';
   }
 
+  // Spot checks taken with Measure now. Listed on their own because they are
+  // taken awake, which is a different state from restful sleep, and so are
+  // kept out of every nightly figure above.
+  function buildManual(manual) {
+    var card = el('div', 'card');
+    card.appendChild(el('h2', null, 'Measure now'));
+    var table = el('table');
+    var tbody = el('tbody');
+    manual.slice().sort(function (a, b) { return b.t - a.t; }).forEach(function (r) {
+      var tr = el('tr');
+      var when = el('td', null, fmtDateTime(r.t));
+      if (r.r) {
+        when.appendChild(el('span', 'sub', r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed'));
+      }
+      tr.appendChild(when);
+      tr.appendChild(el('td', null, r.v + ' ms'));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    card.appendChild(table);
+    card.appendChild(el('p', 'note',
+      'Taken on request, awake, rather than during restful sleep \u2013 so they ' +
+      'are not part of any night\u2019s value, the averages or the chart.'));
+    return card;
+  }
+
   // The worker's own account of the night, mirrored off the watch because
   // removing the app deletes everything stored on it.
+  // Folded away: these are the worker's raw counters, for working out why a
+  // night measured nothing, not something to read every morning.
   function buildStatus(status) {
-    var card = el('div', 'card');
-    card.appendChild(el('h2', null, 'Watch status'));
+    var card = el('details', 'card diag');
+    card.appendChild(el('summary', null, 'Diagnostics'));
 
     var never = function (ts) { return ts ? fmtDateTime(ts) : 'never'; };
     var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings',
-                     3: 'switched off', 4: 'no intervals', 5: 'died computing' };
+                     3: 'switched off', 4: 'no intervals', 5: 'died computing',
+                     6: 'cancelled' };
 
     var rows = [
       ['Worker last alive', never(status.lastTickAt), !status.lastTickAt],
@@ -650,6 +691,8 @@
     var note = 'Sent from the watch the last time you opened the app.';
     if (status.lastOutcome === 1) {
       note += ' The last measurement completed and was recorded.';
+    } else if (status.lastOutcome === 6) {
+      note += ' The last measurement was a Measure now that was cancelled.';
     } else {
       note += ' It explains a night that measured nothing: no restful sleep ' +
               'means the trigger never occurred.';
@@ -685,10 +728,13 @@
     content.innerHTML = '';
 
     var nightCount = groupNights(records).length;
+    var manual = records.filter(function (r) { return r.manual; });
+    var nightly = records.length - manual.length;
     document.getElementById('sub').textContent =
       records.length
         ? nightCount + ' night' + (nightCount === 1 ? '' : 's') + ' \u00b7 ' +
-          records.length + ' measurement' + (records.length === 1 ? '' : 's') +
+          nightly + ' measurement' + (nightly === 1 ? '' : 's') +
+          (manual.length ? ' \u00b7 ' + manual.length + ' manual' : '') +
           ' \u00b7 last synced from the watch ' + fmtAgo(updated) + '.'
         : 'Measurements taken during restful sleep.';
 
@@ -720,136 +766,153 @@
     }
 
     var nights = groupNights(records);
-    var sum = summarize(nights);
-    var c = sum.counts;
-    var nightsWord = function (n) { return n + ' night' + (n === 1 ? '' : 's'); };
-    var soFar = function (need, have) {
-      return 'after ' + nightsWord(need) + ' · ' + have + ' so far';
-    };
+    if (nights.length) {
+      var sum = summarize(nights);
+      var c = sum.counts;
+      var nightsWord = function (n) { return n + ' night' + (n === 1 ? '' : 's'); };
+      var soFar = function (need, have) {
+        return 'after ' + nightsWord(need) + ' · ' + have + ' so far';
+      };
 
-    var tiles = [];
-    var d = sum.delta;
-    tiles.push(['Latest night', fmtMs(sum.last.value),
-      d === null
-        ? 'needs ' + MIN_NIGHTS_AVERAGE + ' earlier nights · ' + c.prior + ' so far'
-        : (Math.abs(d) < 0.5 ? 'same as' : (d > 0 ? '▲ ' : '▼ ') + Math.round(Math.abs(d)) + ' ms vs') +
-          ' previous ' + (c.prior === 1 ? 'night' : c.prior + ' nights'),
-      fmtNight(sum.last.date)]);
-    tiles.push(['7 nights', sum.avgShort === null ? '–' : fmtMs(Math.round(sum.avgShort)),
-      sum.avgShort === null ? soFar(MIN_NIGHTS_AVERAGE, c.recent)
-        : 'average' + (c.recent < WINDOW_SHORT ? ' of ' + c.recent : '')]);
-    tiles.push(['30 nights', sum.avgLong === null ? '–' : fmtMs(Math.round(sum.avgLong)),
-      sum.rangeLow === null
-        ? 'normal range ' + soFar(MIN_NIGHTS_RANGE, c.longer)
-        : 'normal ' + Math.round(sum.rangeLow) + '–' + Math.round(sum.rangeHigh) + ' ms' +
-          (c.longer < WINDOW_LONG ? ' · ' + c.longer + ' nights' : '')]);
-    tiles.push(['Stability', sum.cv === null ? '–' : Math.round(sum.cv) + ' %',
-      sum.cv === null ? soFar(MIN_NIGHTS_CV, c.recent)
-        : 'variation over ' + (c.recent === 1 ? 'night' : c.recent + ' nights') +
-          ' · lower is steadier']);
+      var tiles = [];
+      var d = sum.delta;
+      tiles.push(['Latest night', fmtMs(sum.last.value),
+        d === null
+          ? 'needs ' + MIN_NIGHTS_AVERAGE + ' earlier nights · ' + c.prior + ' so far'
+          : (Math.abs(d) < 0.5 ? 'same as' : (d > 0 ? '▲ ' : '▼ ') + Math.round(Math.abs(d)) + ' ms vs') +
+            ' previous ' + (c.prior === 1 ? 'night' : c.prior + ' nights'),
+        fmtNight(sum.last.date)]);
+      tiles.push(['7 nights', sum.avgShort === null ? '–' : fmtMs(Math.round(sum.avgShort)),
+        sum.avgShort === null ? soFar(MIN_NIGHTS_AVERAGE, c.recent)
+          : 'average' + (c.recent < WINDOW_SHORT ? ' of ' + c.recent : '')]);
+      tiles.push(['30 nights', sum.avgLong === null ? '–' : fmtMs(Math.round(sum.avgLong)),
+        sum.rangeLow === null
+          ? 'normal range ' + soFar(MIN_NIGHTS_RANGE, c.longer)
+          : 'normal ' + Math.round(sum.rangeLow) + '–' + Math.round(sum.rangeHigh) + ' ms' +
+            (c.longer < WINDOW_LONG ? ' · ' + c.longer + ' nights' : '')]);
+      tiles.push(['Stability', sum.cv === null ? '–' : Math.round(sum.cv) + ' %',
+        sum.cv === null ? soFar(MIN_NIGHTS_CV, c.recent)
+          : 'variation over ' + (c.recent === 1 ? 'night' : c.recent + ' nights') +
+            ' · lower is steadier']);
 
-    var stats = el('div', 'stats');
-    tiles.forEach(function (t) {
-      var s = el('div', 'stat');
-      s.appendChild(el('div', 'l', t[0]));
-      s.appendChild(el('div', 'v', t[1]));
-      s.appendChild(el('div', 'd', t[2]));
-      if (t[3]) s.appendChild(el('div', 'd', t[3]));
-      stats.appendChild(s);
-    });
-    content.appendChild(stats);
-    content.appendChild(el('p', 'caveat',
-      'Each night counts once, as the median of its measurements, so a night ' +
-      'with many measurements weighs no more than one with few. The comparison ' +
-      'is only ever with your own nights: HRV differs a great deal from person ' +
-      'to person, and none of this is a medical assessment.'));
-
-    // Two points are a line segment, not a trend, and one is a dot in an empty
-    // box. Below three the list says everything the chart would.
-    if (nights.length >= 3) {
-      var chartCard = el('div', 'card');
-      chartCard.appendChild(el('h2', null, 'RMSSD per night'));
-      var legend = el('div', 'legend');
-      chartCard.appendChild(legend);
-      var holder = el('div', 'chart');
-      chartCard.appendChild(holder);
-      content.appendChild(chartCard);
-      // Drawn once the card is in the page, so its real width is known.
-      var drawn = drawChart(holder, nights, sum);
-      var keys = [['dot', 'Night (median)']];
-      if (drawn.line) keys.push(['line', '7-night average']);
-      if (drawn.band) keys.push(['band', 'Normal range, last ' + c.longer + ' nights']);
-      keys.forEach(function (k) {
-        var item = el('span', 'legend-item');
-        item.appendChild(el('span', 'key ' + k[0]));
-        item.appendChild(document.createTextNode(k[1]));
-        legend.appendChild(item);
+      var stats = el('div', 'stats');
+      tiles.forEach(function (t) {
+        var s = el('div', 'stat');
+        s.appendChild(el('div', 'l', t[0]));
+        s.appendChild(el('div', 'v', t[1]));
+        s.appendChild(el('div', 'd', t[2]));
+        if (t[3]) s.appendChild(el('div', 'd', t[3]));
+        stats.appendChild(s);
       });
-      chart = { holder: holder, nights: nights, summary: sum, width: holder.clientWidth };
+      content.appendChild(stats);
+      content.appendChild(el('p', 'caveat',
+        'Each night counts once, as the median of its measurements, so a night ' +
+        'with many measurements weighs no more than one with few. The comparison ' +
+        'is only ever with your own nights: HRV differs a great deal from person ' +
+        'to person, and none of this is a medical assessment.'));
+
+      // Two points are a line segment, not a trend, and one is a dot in an empty
+      // box. Below three the list says everything the chart would.
+      if (nights.length >= 3) {
+        var chartCard = el('div', 'card');
+        chartCard.appendChild(el('h2', null, 'RMSSD per night'));
+        var legend = el('div', 'legend');
+        chartCard.appendChild(legend);
+        var holder = el('div', 'chart');
+        chartCard.appendChild(holder);
+        content.appendChild(chartCard);
+        // Drawn once the card is in the page, so its real width is known.
+        var drawn = drawChart(holder, nights, sum);
+        var keys = [['dot', 'Night (median)']];
+        if (drawn.line) keys.push(['line', '7-night average']);
+        if (drawn.band) keys.push(['band', 'Normal range, last ' + c.longer + ' nights']);
+        keys.forEach(function (k) {
+          var item = el('span', 'legend-item');
+          item.appendChild(el('span', 'key ' + k[0]));
+          item.appendChild(document.createTextNode(k[1]));
+          legend.appendChild(item);
+        });
+        chart = { holder: holder, nights: nights, summary: sum, width: holder.clientWidth };
+      } else {
+        chart = null;
+      }
+
+      var nightsCard = el('div', 'card');
+      nightsCard.appendChild(el('h2', null, 'Nights'));
+      nights.slice().reverse().forEach(function (n) {
+        var det = el('details', 'night');
+        var summ = el('summary');
+        var left = el('span', 'when', fmtNight(n.date));
+        var meta = n.measurements.length + ' measurement' + (n.measurements.length === 1 ? '' : 's');
+        if (n.rejected) {
+          meta += ' · ' + n.rejected + ' artefact' + (n.rejected === 1 ? '' : 's') + ' removed';
+        }
+        left.appendChild(el('span', 'sub', meta));
+        summ.appendChild(left);
+        summ.appendChild(el('span', 'rmssd', fmtMs(n.value)));
+        det.appendChild(summ);
+
+        var list = el('table');
+        var tbody = el('tbody');
+        n.measurements.slice().reverse().forEach(function (r) {
+          var at = new Date(r.t * 1000);
+          var time = pad(at.getHours()) + ':' + pad(at.getMinutes());
+          // The evening before is a different date from the night's name.
+          if (at.getDate() !== n.date.getDate()) {
+            time = at.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + time;
+          }
+          var isMiddle = n.measurements.length > 1 && n.middle.indexOf(r) >= 0;
+          var tr = el('tr', isMiddle ? 'middle' : null);
+          var when = el('td', null, time);
+          var notes = [];
+          if (isMiddle) notes.push(n.middle.length === 1 ? 'middle value' : 'one of the two middle values');
+          if (r.r) notes.push(r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed');
+          if (notes.length) when.appendChild(el('span', 'sub', notes.join(' \u00b7 ')));
+          tr.appendChild(when);
+          tr.appendChild(el('td', null, r.v + ' ms'));
+          tbody.appendChild(tr);
+        });
+        list.appendChild(tbody);
+        det.appendChild(list);
+        if (n.measurements.length > 1) {
+          // The sum first, since it is what the reader came for; the reason after.
+          var note = el('p', 'median-note');
+          if (n.middle.length === 1) {
+            note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + '.'));
+            note.appendChild(document.createTextNode(
+              ' The marked measurement is the middle one when they are put in order.'));
+          } else {
+            note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + ' = (' +
+                                                n.middle[0].v + ' + ' + n.middle[1].v + ') / 2.'));
+            note.appendChild(document.createTextNode(
+              ' Halfway between the two marked measurements, because an even number ' +
+              'has no single middle one.'));
+          }
+          det.appendChild(note);
+        }
+        nightsCard.appendChild(det);
+      });
+      nightsCard.appendChild(el('p', 'note',
+        'A night is named after the morning it ends, and runs from noon to noon, ' +
+        'so a measurement just before midnight belongs to the next date. Tap a ' +
+        'night to see its measurements.'));
+      content.appendChild(nightsCard);
     } else {
+      // Only Measure now readings so far: nothing to summarise by night.
       chart = null;
+      var noNights = el('div', 'card');
+      var noInner = el('div', 'empty');
+      noInner.appendChild(el('strong', null, 'No nights yet'));
+      noInner.appendChild(el('div', null,
+        'So far there are only Measure now readings. Night figures start with ' +
+        'the first measurement taken during restful sleep.'));
+      noNights.appendChild(noInner);
+      content.appendChild(noNights);
     }
 
-    var nightsCard = el('div', 'card');
-    nightsCard.appendChild(el('h2', null, 'Nights'));
-    nights.slice().reverse().forEach(function (n) {
-      var det = el('details', 'night');
-      var summ = el('summary');
-      var left = el('span', 'when', fmtNight(n.date));
-      var meta = n.measurements.length + ' measurement' + (n.measurements.length === 1 ? '' : 's');
-      if (n.rejected) {
-        meta += ' · ' + n.rejected + ' artefact' + (n.rejected === 1 ? '' : 's') + ' removed';
-      }
-      left.appendChild(el('span', 'sub', meta));
-      summ.appendChild(left);
-      summ.appendChild(el('span', 'rmssd', fmtMs(n.value)));
-      det.appendChild(summ);
-
-      var list = el('table');
-      var tbody = el('tbody');
-      n.measurements.slice().reverse().forEach(function (r) {
-        var at = new Date(r.t * 1000);
-        var time = pad(at.getHours()) + ':' + pad(at.getMinutes());
-        // The evening before is a different date from the night's name.
-        if (at.getDate() !== n.date.getDate()) {
-          time = at.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + time;
-        }
-        var isMiddle = n.measurements.length > 1 && n.middle.indexOf(r) >= 0;
-        var tr = el('tr', isMiddle ? 'middle' : null);
-        var when = el('td', null, time);
-        var notes = [];
-        if (isMiddle) notes.push(n.middle.length === 1 ? 'middle value' : 'one of the two middle values');
-        if (r.r) notes.push(r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed');
-        if (notes.length) when.appendChild(el('span', 'sub', notes.join(' \u00b7 ')));
-        tr.appendChild(when);
-        tr.appendChild(el('td', null, r.v + ' ms'));
-        tbody.appendChild(tr);
-      });
-      list.appendChild(tbody);
-      det.appendChild(list);
-      if (n.measurements.length > 1) {
-        // The sum first, since it is what the reader came for; the reason after.
-        var note = el('p', 'median-note');
-        if (n.middle.length === 1) {
-          note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + '.'));
-          note.appendChild(document.createTextNode(
-            ' The marked measurement is the middle one when they are put in order.'));
-        } else {
-          note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + ' = (' +
-                                              n.middle[0].v + ' + ' + n.middle[1].v + ') / 2.'));
-          note.appendChild(document.createTextNode(
-            ' Halfway between the two marked measurements, because an even number ' +
-            'has no single middle one.'));
-        }
-        det.appendChild(note);
-      }
-      nightsCard.appendChild(det);
-    });
-    nightsCard.appendChild(el('p', 'note',
-      'A night is named after the morning it ends, and runs from noon to noon, ' +
-      'so a measurement just before midnight belongs to the next date. Tap a ' +
-      'night to see its measurements.'));
-    content.appendChild(nightsCard);
+    if (manual.length) {
+      content.appendChild(buildManual(manual));
+    }
 
     var csv = toCsv(records);
     var actions = el('div', 'card');

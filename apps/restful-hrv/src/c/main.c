@@ -8,9 +8,11 @@
 // is open; this side is a switch, a list of what has been measured, and the
 // bridge that hands that list to the phone.
 //
-// Two screens: the switch, and the history behind DOWN.
+// The switch, with Measure now behind UP and the history behind DOWN. A hidden
+// status screen of the worker's own counters sits behind a long press of UP;
+// it is for tracking down a night that measured nothing, not for everyday use.
 
-#define APP_VERSION "1.7.1"
+#define APP_VERSION "1.8.0"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
@@ -48,7 +50,30 @@ static Window *s_diag_window;
 static ScrollLayer *s_diag_scroll;
 static TextLayer *s_diag_text_layer;
 static char s_diag_text[640];
-static AppTimer *s_diag_refresh_timer;
+
+// Measure now. Its progress is read back from the diagnostics the worker
+// flushes every second during a manual measurement - the app and the worker
+// share no other channel in that direction.
+typedef enum {
+  MEASURE_INTRO,       // instructions, waiting for SELECT
+  MEASURE_OFF,         // measuring is switched off, so there is no worker
+  MEASURE_RUNNING,     // counting down
+  MEASURE_CONFIRM,     // BACK pressed while running: cancel?
+  MEASURE_BUSY,        // the worker was already measuring restful sleep
+  MEASURE_DONE,        // a result was recorded
+  MEASURE_FAILED,      // the measurement ended without a result
+} MeasureState;
+
+static Window *s_measure_window;
+static Layer *s_measure_layer;
+static AppTimer *s_measure_timer;
+static MeasureState s_measure_state;
+static time_t s_measure_start;
+static HrvDiagnostics s_measure_diag0;   // counters when the measurement began
+static HrvDiagnostics s_measure_diag;    // latest counters
+static uint16_t s_measure_rmssd;
+static uint16_t s_measure_rejected;
+static uint8_t s_measure_outcome;
 
 static bool s_enabled;
 
@@ -91,9 +116,6 @@ static void prv_load_history(void) {
 
 // ---------------------------------------------------------------- phone bridge
 
-// Hands the whole history to PebbleKit JS, which caches it so the settings page
-// can show it later. The worker cannot do this itself - background workers have
-// no AppMessage - so the data only reaches the phone while this app is open.
 // Loads the worker's record of the night. Returns false when there is none.
 static bool prv_load_diagnostics(HrvDiagnostics *diag) {
   memset(diag, 0, sizeof(*diag));
@@ -248,9 +270,10 @@ static void prv_menu_draw_row(GContext *ctx, const Layer *cell_layer,
   static char title[24];
   static char subtitle[32];
 
-  if (record->rejected > 0) {
-    snprintf(title, sizeof(title), "%u ms  (-%u)", (unsigned)record->rmssd_ms,
-             (unsigned)record->rejected);
+  unsigned rejected = record->rejected & HRV_REJECTED_COUNT_MASK;
+  bool manual = (record->rejected & HRV_REJECTED_MANUAL_FLAG) != 0;
+  if (rejected > 0) {
+    snprintf(title, sizeof(title), "%u ms  (-%u)", (unsigned)record->rmssd_ms, rejected);
   } else {
     snprintf(title, sizeof(title), "%u ms", (unsigned)record->rmssd_ms);
   }
@@ -258,8 +281,13 @@ static void prv_menu_draw_row(GContext *ctx, const Layer *cell_layer,
   time_t when = (time_t)record->timestamp;
   struct tm *local = localtime(&when);
   // Follows the watch's own 12/24-hour setting, like the rest of this repo's apps.
+  // A Measure now is labelled, since it was taken awake and is not part of any
+  // night's figures on the phone.
   strftime(subtitle, sizeof(subtitle),
-           clock_is_24h_style() ? "%a %d %b, %H:%M" : "%a %d %b, %I:%M %p", local);
+           manual ? (clock_is_24h_style() ? "manual · %a %d %b, %H:%M"
+                                          : "manual · %a %d %b, %I:%M %p")
+                  : (clock_is_24h_style() ? "%a %d %b, %H:%M" : "%a %d %b, %I:%M %p"),
+           local);
 
   menu_cell_basic_draw(ctx, cell_layer, title, subtitle, NULL);
 }
@@ -339,6 +367,7 @@ static const char *prv_outcome_text(uint8_t outcome) {
     case HRV_OUTCOME_NO_INTERVALS: return "no intervals";
     case HRV_OUTCOME_COMPUTING: return "died computing";
     case HRV_OUTCOME_DISABLED: return "switched off";
+    case HRV_OUTCOME_CANCELLED: return "cancelled";
     default:                   return "none yet";
   }
 }
@@ -380,8 +409,6 @@ static void prv_build_diag_text(void) {
            "Of those, empty: %u\n"
            "Period granted: %s\n"
            "\n"
-           "Hold SELECT: measure now\n"
-           "\n"
            "MEASUREMENTS\n"
            "Episodes: %u\n"
            "Last result: %s\n"
@@ -400,42 +427,7 @@ static void prv_build_diag_text(void) {
            (unsigned)diag.last_sample_count, (unsigned)diag.last_rejected);
 }
 
-static void prv_diag_refresh(void *data);
-
-static void prv_diag_redraw(void) {
-  if (!s_diag_text_layer) {
-    return;
-  }
-  prv_build_diag_text();
-  // Setting the same pointer again does not repaint on its own.
-  text_layer_set_text(s_diag_text_layer, "");
-  text_layer_set_text(s_diag_text_layer, s_diag_text);
-}
-
-static void prv_request_measurement(ClickRecognizerRef recognizer, void *context) {
-  if (!app_worker_is_running()) {
-    return;
-  }
-  AppWorkerMessage message = { .data0 = WORKER_CMD_MEASURE_NOW };
-  app_worker_send_message(WORKER_MSG_FROM_APP, &message);
-  vibes_short_pulse();
-
-  // The worker flushes its counters every second during a manual measurement,
-  // so they can be watched here rather than waited for overnight.
-  if (!s_diag_refresh_timer) {
-    s_diag_refresh_timer = app_timer_register(1000, prv_diag_refresh, NULL);
-  }
-}
-
-static void prv_diag_refresh(void *data) {
-  s_diag_refresh_timer = NULL;
-  prv_diag_redraw();
-  s_diag_refresh_timer = app_timer_register(1000, prv_diag_refresh, NULL);
-}
-
 static void prv_diag_click_config(void *context) {
-  // Long press, so it cannot be hit while scrolling the page.
-  window_long_click_subscribe(BUTTON_ID_SELECT, 0, prv_request_measurement, NULL);
   window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler)scroll_layer_scroll_up_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler)scroll_layer_scroll_down_click_handler);
 }
@@ -448,8 +440,8 @@ static void prv_diag_window_load(Window *window) {
 
   s_diag_scroll = scroll_layer_create(bounds);
   scroll_layer_set_click_config_onto_window(s_diag_scroll, window);
-  // Replaces the scroll layer's provider, so the scroll handlers are re-added
-  // above alongside the one that starts a measurement.
+  // Replaces the scroll layer's provider, which would otherwise also claim
+  // SELECT; only scrolling is wanted here.
   window_set_click_config_provider_with_context(window, prv_diag_click_config, s_diag_scroll);
 
   GRect text_bounds = GRect(6, 4, bounds.size.w - 12, 2000);
@@ -467,10 +459,6 @@ static void prv_diag_window_load(Window *window) {
 }
 
 static void prv_diag_window_unload(Window *window) {
-  if (s_diag_refresh_timer) {
-    app_timer_cancel(s_diag_refresh_timer);
-    s_diag_refresh_timer = NULL;
-  }
   text_layer_destroy(s_diag_text_layer);
   scroll_layer_destroy(s_diag_scroll);
   window_destroy(s_diag_window);
@@ -484,6 +472,300 @@ static void prv_show_diagnostics(void) {
     .unload = prv_diag_window_unload,
   });
   window_stack_push(s_diag_window, true);
+}
+
+// ----------------------------------------------------------- measure now screen
+
+// The same two-minute window a night measurement uses, so a spot check taken
+// awake is at least measured the same way.
+#define MEASURE_TICK_MS 1000
+
+// If the worker has not counted a new episode this long after being asked, it
+// was already busy with a restful sleep measurement and ignored the request.
+#define MEASURE_START_GRACE_SEC 3
+
+// Enough empty readings, with no good ones, to say the strap is the problem
+// rather than just a slow start.
+#define MEASURE_NO_SIGNAL_AFTER 5
+
+// How long to wait for a recorded result to appear in the history.
+#define MEASURE_RESULT_WAIT_SEC 5
+
+static void prv_measure_tick(void *data);
+
+static uint16_t prv_measure_good_beats(void) {
+  uint16_t events = s_measure_diag.hrv_events_measuring - s_measure_diag0.hrv_events_measuring;
+  uint16_t empty = s_measure_diag.hrv_zero_events - s_measure_diag0.hrv_zero_events;
+  return (events > empty) ? (uint16_t)(events - empty) : 0;
+}
+
+static uint16_t prv_measure_empty_beats(void) {
+  return s_measure_diag.hrv_zero_events - s_measure_diag0.hrv_zero_events;
+}
+
+static int prv_measure_remaining(void) {
+  int left = HRV_MEASURE_DURATION_SEC - (int)(time(NULL) - s_measure_start);
+  return (left < 0) ? 0 : left;
+}
+
+static void prv_measure_set_state(MeasureState state) {
+  s_measure_state = state;
+  if (s_measure_layer) {
+    layer_mark_dirty(s_measure_layer);
+  }
+}
+
+// The newest history record from this measurement, to show its value. The
+// diagnostics say how it ended but not what it measured.
+static bool prv_measure_read_result(void) {
+  prv_load_history();
+  if (s_history_count == 0) {
+    return false;
+  }
+  const HrvRecord *last = &s_history[s_history_count - 1];
+  if ((time_t)last->timestamp < s_measure_start) {
+    return false;
+  }
+  s_measure_rmssd = last->rmssd_ms;
+  s_measure_rejected = last->rejected & HRV_REJECTED_COUNT_MASK;
+  return true;
+}
+
+static void prv_measure_tick(void *data) {
+  s_measure_timer = NULL;
+  if (s_measure_state != MEASURE_RUNNING && s_measure_state != MEASURE_CONFIRM) {
+    return;
+  }
+  prv_load_diagnostics(&s_measure_diag);
+  bool started = s_measure_diag.episodes != s_measure_diag0.episodes;
+
+  if (!started && time(NULL) - s_measure_start >= MEASURE_START_GRACE_SEC) {
+    prv_measure_set_state(MEASURE_BUSY);
+    return;
+  }
+
+  // Finished once the worker has stamped an outcome after we started, and is
+  // no longer part-way through computing it.
+  if (started && (time_t)s_measure_diag.last_outcome_at >= s_measure_start &&
+      s_measure_diag.last_outcome != HRV_OUTCOME_COMPUTING) {
+    s_measure_outcome = s_measure_diag.last_outcome;
+    if (s_measure_outcome == HRV_OUTCOME_LOGGED) {
+      if (prv_measure_read_result()) {
+        vibes_double_pulse();
+        prv_measure_set_state(MEASURE_DONE);
+        return;
+      }
+      // The worker records the outcome before it writes the history, so the
+      // value can be a moment behind. Worth a few more looks before calling a
+      // recorded measurement a failure.
+      if (time(NULL) - (time_t)s_measure_diag.last_outcome_at < MEASURE_RESULT_WAIT_SEC) {
+        s_measure_timer = app_timer_register(MEASURE_TICK_MS, prv_measure_tick, NULL);
+        return;
+      }
+    }
+    vibes_long_pulse();
+    prv_measure_set_state(MEASURE_FAILED);
+    return;
+  }
+
+  layer_mark_dirty(s_measure_layer);
+  s_measure_timer = app_timer_register(MEASURE_TICK_MS, prv_measure_tick, NULL);
+}
+
+static void prv_measure_start(void) {
+  if (!app_worker_is_running()) {
+    prv_measure_set_state(MEASURE_OFF);
+    return;
+  }
+  prv_load_diagnostics(&s_measure_diag0);
+  s_measure_diag = s_measure_diag0;
+  s_measure_start = time(NULL);
+
+  AppWorkerMessage message = { .data0 = WORKER_CMD_MEASURE_NOW };
+  app_worker_send_message(WORKER_MSG_FROM_APP, &message);
+  vibes_short_pulse();
+
+  prv_measure_set_state(MEASURE_RUNNING);
+  s_measure_timer = app_timer_register(MEASURE_TICK_MS, prv_measure_tick, NULL);
+}
+
+static void prv_measure_cancel(void) {
+  AppWorkerMessage message = { .data0 = WORKER_CMD_CANCEL };
+  app_worker_send_message(WORKER_MSG_FROM_APP, &message);
+  window_stack_remove(s_measure_window, true);
+}
+
+// Draws text in a box, centred, and returns the height it took.
+static int prv_draw_text(GContext *ctx, const char *text, const char *font_key,
+                         GRect box, GColor color) {
+  GFont font = fonts_get_system_font(font_key);
+  graphics_context_set_text_color(ctx, color);
+  GSize size = graphics_text_layout_get_content_size(text, font, box,
+                                                     GTextOverflowModeWordWrap,
+                                                     GTextAlignmentCenter);
+  graphics_draw_text(ctx, text, font, GRect(box.origin.x, box.origin.y, box.size.w, size.h + 4),
+                     GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+  return size.h + 4;
+}
+
+static void prv_measure_draw_ring(GContext *ctx, GRect bounds) {
+  int diameter = bounds.size.w - 50;
+  GRect ring = GRect((bounds.size.w - diameter) / 2, 14, diameter, diameter);
+  int left = prv_measure_remaining();
+
+  // The track, then what is left of it: the ring empties as time runs out.
+  graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorLightGray, GColorBlack));
+  graphics_fill_radial(ctx, ring, GOvalScaleModeFitCircle, 4, 0, TRIG_MAX_ANGLE);
+  if (left > 0) {
+    graphics_context_set_fill_color(ctx, PBL_IF_COLOR_ELSE(GColorVividCerulean, GColorBlack));
+    int32_t end = TRIG_MAX_ANGLE * left / HRV_MEASURE_DURATION_SEC;
+    graphics_fill_radial(ctx, ring, GOvalScaleModeFitCircle, 12, 0, end);
+  }
+
+  static char clock[12];
+  if (left > 0) {
+    snprintf(clock, sizeof(clock), "%d:%02d", left / 60, left % 60);
+  } else {
+    strncpy(clock, "0:00", sizeof(clock));
+  }
+  GFont big = fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD);
+  graphics_context_set_text_color(ctx, GColorBlack);
+  graphics_draw_text(ctx, clock, big,
+                     GRect(ring.origin.x, ring.origin.y + diameter / 2 - 30, diameter, 50),
+                     GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+
+  static char line[40];
+  int y = ring.origin.y + diameter + 10;
+  GRect box = GRect(8, y, bounds.size.w - 16, bounds.size.h - y);
+  if (left == 0) {
+    prv_draw_text(ctx, "Finishing…", FONT_KEY_GOTHIC_18_BOLD, box, GColorBlack);
+  } else if (prv_measure_good_beats() == 0 && prv_measure_empty_beats() >= MEASURE_NO_SIGNAL_AFTER) {
+    prv_draw_text(ctx, "No heartbeat signal – check the strap",
+                  FONT_KEY_GOTHIC_18_BOLD, box, PBL_IF_COLOR_ELSE(GColorOrange, GColorBlack));
+  } else {
+    snprintf(line, sizeof(line), "Heartbeats: %u\nKeep still", (unsigned)prv_measure_good_beats());
+    prv_draw_text(ctx, line, FONT_KEY_GOTHIC_18, box, GColorBlack);
+  }
+}
+
+static void prv_measure_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  GRect box = GRect(10, 18, bounds.size.w - 20, bounds.size.h - 18);
+  static char big[16];
+  static char detail[96];
+
+  switch (s_measure_state) {
+    case MEASURE_INTRO:
+      box.origin.y += prv_draw_text(ctx, "Measure now", FONT_KEY_GOTHIC_28_BOLD, box, GColorBlack);
+      box.origin.y += 6;
+      prv_draw_text(ctx, "Sit or lie still for 2 minutes and keep the strap snug.\n\n"
+                    "SELECT to start", FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+    case MEASURE_OFF:
+      box.origin.y += prv_draw_text(ctx, "Measuring is off", FONT_KEY_GOTHIC_24_BOLD, box, GColorBlack);
+      box.origin.y += 6;
+      prv_draw_text(ctx, "Turn it on first with SELECT on the main screen.",
+                    FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+    case MEASURE_RUNNING:
+      prv_measure_draw_ring(ctx, bounds);
+      break;
+    case MEASURE_CONFIRM:
+      box.origin.y += 20;
+      box.origin.y += prv_draw_text(ctx, "Cancel measurement?", FONT_KEY_GOTHIC_24_BOLD, box, GColorBlack);
+      box.origin.y += 10;
+      prv_draw_text(ctx, "BACK: cancel\nSELECT: keep measuring", FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+    case MEASURE_BUSY:
+      box.origin.y += prv_draw_text(ctx, "Already measuring", FONT_KEY_GOTHIC_24_BOLD, box, GColorBlack);
+      box.origin.y += 6;
+      prv_draw_text(ctx, "A restful sleep measurement is running. Try again when it has finished.",
+                    FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+    case MEASURE_DONE:
+      box.origin.y += 16;
+      snprintf(big, sizeof(big), "%u ms", (unsigned)s_measure_rmssd);
+      box.origin.y += prv_draw_text(ctx, big, FONT_KEY_BITHAM_42_BOLD, box, GColorBlack);
+      box.origin.y += prv_draw_text(ctx, "RMSSD", FONT_KEY_GOTHIC_18_BOLD, box, GColorBlack);
+      box.origin.y += 8;
+      if (s_measure_rejected > 0) {
+        snprintf(detail, sizeof(detail), "%u heartbeats · %u artefact%s removed\n\n"
+                 "Saved in the history as manual.",
+                 (unsigned)s_measure_diag.last_sample_count, (unsigned)s_measure_rejected,
+                 s_measure_rejected == 1 ? "" : "s");
+      } else {
+        snprintf(detail, sizeof(detail), "%u heartbeats\n\nSaved in the history as manual.",
+                 (unsigned)s_measure_diag.last_sample_count);
+      }
+      prv_draw_text(ctx, detail, FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+    case MEASURE_FAILED:
+      box.origin.y += prv_draw_text(ctx, "No result", FONT_KEY_GOTHIC_24_BOLD, box, GColorBlack);
+      box.origin.y += 6;
+      prv_draw_text(ctx, (s_measure_outcome == HRV_OUTCOME_NO_INTERVALS)
+          ? "No heartbeat signal. The watch did not think it was being worn – "
+            "check the strap and try again."
+          : "Too few clean heartbeats. Keep still, make sure the strap is snug, "
+            "and try again.",
+          FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
+  }
+}
+
+static void prv_measure_select(ClickRecognizerRef recognizer, void *context) {
+  if (s_measure_state == MEASURE_INTRO) {
+    prv_measure_start();
+  } else if (s_measure_state == MEASURE_CONFIRM) {
+    prv_measure_set_state(MEASURE_RUNNING);
+  }
+}
+
+// BACK is taken over so a measurement is not abandoned by accident. Anywhere
+// but the countdown it does what BACK always does.
+static void prv_measure_back(ClickRecognizerRef recognizer, void *context) {
+  if (s_measure_state == MEASURE_RUNNING) {
+    prv_measure_set_state(MEASURE_CONFIRM);
+  } else if (s_measure_state == MEASURE_CONFIRM) {
+    prv_measure_cancel();
+  } else {
+    window_stack_remove(s_measure_window, true);
+  }
+}
+
+static void prv_measure_click_config(void *context) {
+  window_single_click_subscribe(BUTTON_ID_SELECT, prv_measure_select);
+  window_single_click_subscribe(BUTTON_ID_BACK, prv_measure_back);
+}
+
+static void prv_measure_window_load(Window *window) {
+  Layer *root_layer = window_get_root_layer(window);
+  s_measure_layer = layer_create(layer_get_bounds(root_layer));
+  layer_set_update_proc(s_measure_layer, prv_measure_update_proc);
+  layer_add_child(root_layer, s_measure_layer);
+}
+
+static void prv_measure_window_unload(Window *window) {
+  // Leaving by any route other than a confirmed cancel lets the worker finish:
+  // the result still lands in the history.
+  if (s_measure_timer) {
+    app_timer_cancel(s_measure_timer);
+    s_measure_timer = NULL;
+  }
+  layer_destroy(s_measure_layer);
+  s_measure_layer = NULL;
+  window_destroy(s_measure_window);
+  s_measure_window = NULL;
+}
+
+static void prv_show_measure(void) {
+  s_measure_state = app_worker_is_running() ? MEASURE_INTRO : MEASURE_OFF;
+  s_measure_window = window_create();
+  window_set_click_config_provider(s_measure_window, prv_measure_click_config);
+  window_set_window_handlers(s_measure_window, (WindowHandlers) {
+    .load = prv_measure_window_load,
+    .unload = prv_measure_window_unload,
+  });
+  window_stack_push(s_measure_window, true);
 }
 
 // --------------------------------------------------------------- switch screen
@@ -504,8 +786,8 @@ static void prv_update_display(void) {
   text_layer_set_text(s_worker_layer, s_worker_text);
 
   text_layer_set_text(s_hint_layer, s_enabled
-      ? "SELECT to turn off\nDOWN history  UP status"
-      : "SELECT to turn on\nDOWN history  UP status");
+      ? "SELECT to turn off\nUP measure now\nDOWN history"
+      : "SELECT to turn on\nUP measure now\nDOWN history");
 }
 
 static void prv_poll_worker_state(void *data) {
@@ -552,6 +834,12 @@ static void prv_down_click_handler(ClickRecognizerRef recognizer, void *context)
 }
 
 static void prv_up_click_handler(ClickRecognizerRef recognizer, void *context) {
+  prv_show_measure();
+}
+
+// Deliberately unlisted on screen: the worker's raw counters, for working out
+// why a night measured nothing.
+static void prv_up_long_click_handler(ClickRecognizerRef recognizer, void *context) {
   prv_show_diagnostics();
 }
 
@@ -559,6 +847,7 @@ static void prv_click_config_provider(void *context) {
   window_single_click_subscribe(BUTTON_ID_SELECT, prv_select_click_handler);
   window_single_click_subscribe(BUTTON_ID_DOWN, prv_down_click_handler);
   window_single_click_subscribe(BUTTON_ID_UP, prv_up_click_handler);
+  window_long_click_subscribe(BUTTON_ID_UP, 0, prv_up_long_click_handler, NULL);
 }
 
 static void prv_window_load(Window *window) {

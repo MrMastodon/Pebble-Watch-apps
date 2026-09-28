@@ -68,14 +68,23 @@
 // touched - only the mechanical errors.
 #define HRV_ARTEFACT_TOLERANCE_PCT 20
 
-// One stored measurement. Six bytes rather than eight: RMSSD is tens to low
-// hundreds of milliseconds, so 16 bits is ample, and the saving is what lets a
-// useful number of records fit in a single persist value.
+// One stored measurement, eight bytes: RMSSD is tens to low hundreds of
+// milliseconds, so 16 bits is ample, and keeping records this small is what
+// lets a useful number of them fit in a single persist value.
 typedef struct __attribute__((__packed__)) {
   uint32_t timestamp;  // UTC, when the measurement ended
   uint16_t rmssd_ms;   // RMSSD, whole milliseconds, after artefact filtering
-  uint16_t rejected;   // intervals the artefact filter threw away
+  uint16_t rejected;   // intervals the artefact filter threw away, plus the flag below
 } HrvRecord;
+
+// Set in HrvRecord.rejected for a measurement started with Measure now rather
+// than by restful sleep. The count itself can never come near this bit - there
+// are at most HRV_PPI_CAPACITY intervals to reject - so it costs no space and
+// keeps the record, and the link format built from it, exactly as it was. The
+// settings page uses it to keep daytime spot checks out of the nightly figures.
+// DataLogging carries the same flag as bit 16 of its third value.
+#define HRV_REJECTED_MANUAL_FLAG 0x8000
+#define HRV_REJECTED_COUNT_MASK 0x7FFF
 
 // A persist value tops out at PERSIST_DATA_MAX_LENGTH (256 bytes), so the whole
 // history fits in one key at this size - no splitting across keys, no partial
@@ -102,6 +111,7 @@ typedef enum {
   // dies doing the arithmetic leaves this behind instead of looking as though
   // the measurement never ended. Seeing it persist is the bug report.
   HRV_OUTCOME_COMPUTING = 5,
+  HRV_OUTCOME_CANCELLED = 6,  // a Measure now the user cancelled; nothing stored
 } HrvOutcome;
 
 // Enough to tell the failure modes apart without a tethered computer: a worker
@@ -141,11 +151,11 @@ typedef struct __attribute__((__packed__)) {
   uint16_t last_rejected;         // intervals the artefact filter removed, last time
 } HrvDiagnostics;
 
-// Messages from the app to the worker. Only one so far: run a measurement now,
-// without waiting for restful sleep. Debugging this app against real sleep means
-// a whole night per attempt, which is no way to find anything out.
+// Messages from the app to the worker: run a measurement now, without waiting
+// for restful sleep, or cancel one started that way.
 #define WORKER_MSG_FROM_APP 0
 #define WORKER_CMD_MEASURE_NOW 1
+#define WORKER_CMD_CANCEL 2
 
 // Writing on every tick would mean hundreds of flash writes a night for a field
 // that only needs to show the worker was alive. Meaningful changes are written

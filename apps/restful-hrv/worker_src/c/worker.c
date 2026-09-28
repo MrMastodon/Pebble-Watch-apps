@@ -211,15 +211,17 @@ static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms, uint16_t r
   persist_write_int(PERSIST_KEY_HISTORY_COUNT, count);
 }
 
-static void prv_log_measurement(uint32_t rmssd_ms, uint16_t rejected) {
+static void prv_log_measurement(uint32_t rmssd_ms, uint16_t rejected, bool manual) {
   if (!s_log_session) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "HRV result dropped: no logging session");
     return;
   }
   // The timestamp rides along because DataLogging does not timestamp records,
   // and the rejection count so a reader can judge how much cleaning a value
-  // needed.
-  uint32_t record[3] = { (uint32_t)time(NULL), rmssd_ms, rejected };
+  // needed. Bit 16 of that value marks a Measure now, as the flag does in the
+  // history.
+  uint32_t record[3] = { (uint32_t)time(NULL), rmssd_ms,
+                         (uint32_t)rejected | (manual ? 0x10000u : 0u) };
   DataLoggingResult result = data_logging_log(s_log_session, record, 3);
   // Worth saying out loud: a full or closed session means the night's numbers
   // are being silently thrown away, and nothing else would reveal that.
@@ -247,6 +249,30 @@ static void prv_start_measurement(void) {
           granted ? "yes" : "no");
 }
 
+// Puts the sensor and the tick back as they are between measurements. Shared by
+// the normal end and a cancel, so neither can leave the sensor held.
+static void prv_release_sensor(void) {
+  s_measuring = false;
+  s_manual = false;
+  // Released first, so the sensor stops being driven at the measurement rate
+  // even if something below misbehaves.
+  health_service_set_hrv_sample_period(0);
+  tick_timer_service_subscribe(IDLE_TICK_UNIT, prv_tick_handler);
+}
+
+// A Measure now the user gave up on: nothing is computed or stored, only the
+// fact that it was cancelled, so the app can tell that apart from a failure.
+static void prv_cancel_measurement(void) {
+  if (!s_measuring || !s_manual) {
+    return;
+  }
+  prv_release_sensor();
+  s_diag.last_outcome_at = (uint32_t)time(NULL);
+  s_diag.last_outcome = HRV_OUTCOME_CANCELLED;
+  prv_diag_flush();
+  APP_LOG(APP_LOG_LEVEL_INFO, "Manual measurement cancelled");
+}
+
 // Ends the current measurement, whatever the reason: the window elapsed, the
 // sleep episode ended early, the user switched measuring off, or the worker is
 // shutting down. Whatever was collected is logged if it is enough to be worth
@@ -255,13 +281,9 @@ static void prv_stop_measurement(void) {
   if (!s_measuring) {
     return;
   }
-  s_measuring = false;
-  s_manual = false;
-
-  // Released first, so the sensor stops being driven at the measurement rate
-  // even if something below misbehaves.
-  health_service_set_hrv_sample_period(0);
-  tick_timer_service_subscribe(IDLE_TICK_UNIT, prv_tick_handler);
+  // Read before prv_release_sensor() clears it.
+  bool manual = s_manual;
+  prv_release_sensor();
 
   // Recorded and flushed before the arithmetic rather than after it. A worker
   // that dies computing the result then leaves behind how far it got, instead
@@ -293,8 +315,9 @@ static void prv_stop_measurement(void) {
             "%u rejected", (unsigned)rmssd_ms, (unsigned)s_ppi_count, (unsigned)rejected);
     // History first: it is the copy the user can actually reach from the watch,
     // so it should not depend on DataLogging having room.
-    prv_append_history((uint32_t)time(NULL), rmssd_ms, rejected);
-    prv_log_measurement(rmssd_ms, rejected);
+    prv_append_history((uint32_t)time(NULL), rmssd_ms,
+                       rejected | (manual ? HRV_REJECTED_MANUAL_FLAG : 0));
+    prv_log_measurement(rmssd_ms, rejected, manual);
   } else {
     APP_LOG(APP_LOG_LEVEL_INFO, "HRV measurement discarded: %u intervals, %u rejected, "
             "%u off-wrist", (unsigned)s_ppi_count, (unsigned)rejected,
@@ -381,6 +404,10 @@ static void prv_worker_message_handler(uint16_t type, AppWorkerMessage *message)
     APP_LOG(APP_LOG_LEVEL_INFO, "Manual measurement requested");
     s_manual = true;
     prv_start_measurement();
+  } else if (message->data0 == WORKER_CMD_CANCEL) {
+    // Only ever cancels a Measure now; a night measurement in progress is left
+    // alone, since the app has no business stopping one it did not start.
+    prv_cancel_measurement();
   }
 }
 
