@@ -316,7 +316,11 @@ buttons to copy or download them as CSV.
 one measurement to ten, so an average over measurements lets long nights count
 several times over, and a single bad episode can drag a whole night with it.
 Instead every night gets one value, the **median** of its measurements, and all
-the figures are built from those:
+the figures are built from those. With an even number of measurements there is
+no single middle one, so the median is halfway between the two middle ones, and
+a night of 31, 33, 38 and 56 ms is worth 35.5 ms, a value none of them has.
+Opening a night on the page marks the measurement or two the value comes from
+and shows the sum.
 
 | Figure | What it is | Shown from |
 |---|---|---|

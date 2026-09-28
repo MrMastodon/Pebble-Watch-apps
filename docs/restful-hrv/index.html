@@ -95,8 +95,13 @@
   details.night summary .rmssd { font-weight: 600; font-variant-numeric: tabular-nums; }
   details.night table { margin: 0 0 8px 16px; width: calc(100% - 16px); }
   details.night td { font-size: 14px; padding: 7px 0; }
+  details.night tr.middle td:last-child { font-weight: 600; }
+  details.night td:first-child { padding-left: 10px; }
+  details.night tr.middle td:first-child { box-shadow: inset 3px 0 0 var(--series-1); }
+  .median-note { color: var(--muted); font-size: 12px; line-height: 1.45;
+                 margin: -2px 0 12px 26px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  td:last-child { text-align: right; }
+  td:last-child { text-align: right; white-space: nowrap; padding-left: 12px; }
   td { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
   td .sub { display: block; font-size: 12px; color: var(--muted); margin: 1px 0 0; }
   .btns { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -307,6 +312,12 @@
     });
     nights.forEach(function (n) {
       n.value = median(n.measurements.map(function (r) { return r.v; }));
+      // The measurement or two the median comes from, so the list can show
+      // where a value like 35.5 - which no single measurement has - came from.
+      // Ties are broken by time, so the choice is the same on every render.
+      var byValue = n.measurements.slice().sort(function (a, b) { return a.v - b.v || a.t - b.t; });
+      var mid = Math.floor(byValue.length / 2);
+      n.middle = (byValue.length % 2) ? [byValue[mid]] : [byValue[mid - 1], byValue[mid]];
       // Records from before the artefact filter carry no count; a sum over
       // them would claim nothing was removed when nothing was checked.
       var unknown = n.measurements.some(function (r) { return r.r === null; });
@@ -797,18 +808,27 @@
         if (at.getDate() !== n.date.getDate()) {
           time = at.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + time;
         }
-        var tr = el('tr');
+        var isMiddle = n.measurements.length > 1 && n.middle.indexOf(r) >= 0;
+        var tr = el('tr', isMiddle ? 'middle' : null);
         var when = el('td', null, time);
-        if (r.r) {
-          when.appendChild(el('span', 'sub',
-            r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed'));
-        }
+        var notes = [];
+        if (isMiddle) notes.push(n.middle.length === 1 ? 'middle value' : 'one of the two middle values');
+        if (r.r) notes.push(r.r + ' artefact' + (r.r === 1 ? '' : 's') + ' removed');
+        if (notes.length) when.appendChild(el('span', 'sub', notes.join(' \u00b7 ')));
         tr.appendChild(when);
         tr.appendChild(el('td', null, r.v + ' ms'));
         tbody.appendChild(tr);
       });
       list.appendChild(tbody);
       det.appendChild(list);
+      if (n.measurements.length > 1) {
+        det.appendChild(el('p', 'median-note', n.middle.length === 1
+          ? 'The night\u2019s value is the middle one when the measurements are ' +
+            'put in order: ' + fmtMs(n.value) + '.'
+          : 'With an even number of measurements there is no single middle one, ' +
+            'so the night\u2019s value is halfway between the two middle ones: (' +
+            n.middle[0].v + ' + ' + n.middle[1].v + ') / 2 = ' + fmtMs(n.value) + '.'));
+      }
       nightsCard.appendChild(det);
     });
     nightsCard.appendChild(el('p', 'note',
