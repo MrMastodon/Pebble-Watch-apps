@@ -97,9 +97,15 @@
   details.night td { font-size: 14px; padding: 7px 0; }
   details.night tr.middle td:last-child { font-weight: 600; }
   details.night td:first-child { padding-left: 10px; }
+  /* The middle measurements and the note explaining them share a stripe and
+     a tint, so they read as one group. */
+  details.night tr.middle td { background: var(--accent-soft); }
   details.night tr.middle td:first-child { box-shadow: inset 3px 0 0 var(--series-1); }
+  details.night tr.middle td:last-child { padding-right: 10px; }
   .median-note { color: var(--muted); font-size: 12px; line-height: 1.45;
-                 margin: -2px 0 12px 26px; }
+                 background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--series-1);
+                 border-radius: 0 6px 6px 0; padding: 8px 10px; margin: 0 0 12px 16px; }
+  .median-note strong { color: var(--ink); font-weight: 600; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   td:last-child { text-align: right; white-space: nowrap; padding-left: 12px; }
   td { padding: 9px 0; border-top: 1px solid var(--line); font-size: 15px; }
@@ -822,12 +828,20 @@
       list.appendChild(tbody);
       det.appendChild(list);
       if (n.measurements.length > 1) {
-        det.appendChild(el('p', 'median-note', n.middle.length === 1
-          ? 'The night\u2019s value is the middle one when the measurements are ' +
-            'put in order: ' + fmtMs(n.value) + '.'
-          : 'With an even number of measurements there is no single middle one, ' +
-            'so the night\u2019s value is halfway between the two middle ones: (' +
-            n.middle[0].v + ' + ' + n.middle[1].v + ') / 2 = ' + fmtMs(n.value) + '.'));
+        // The sum first, since it is what the reader came for; the reason after.
+        var note = el('p', 'median-note');
+        if (n.middle.length === 1) {
+          note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + '.'));
+          note.appendChild(document.createTextNode(
+            ' The marked measurement is the middle one when they are put in order.'));
+        } else {
+          note.appendChild(el('strong', null, 'Night value ' + fmtMs(n.value) + ' = (' +
+                                              n.middle[0].v + ' + ' + n.middle[1].v + ') / 2.'));
+          note.appendChild(document.createTextNode(
+            ' Halfway between the two marked measurements, because an even number ' +
+            'has no single middle one.'));
+        }
+        det.appendChild(note);
       }
       nightsCard.appendChild(det);
     });
