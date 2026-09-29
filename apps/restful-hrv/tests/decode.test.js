@@ -12,8 +12,9 @@ const grab = name => {
   const a = html.indexOf('  function ' + name + '(');
   return html.slice(a, html.indexOf('\n  }\n', a) + 4);
 };
-const P = new Function(grab('fromBase64Url') + grab('decodeRecords') + grab('toCsv') +
-                       '; return {fromBase64Url, decodeRecords, toCsv};')();
+const P = new Function('var RECORD_BYTES_V1 = 6, RECORD_BYTES_V2 = 8;' +
+                       grab('fromBase64Url') + grab('decodeRecords') + grab('toCsv') + grab('recordWidth') +
+                       '; return {fromBase64Url, decodeRecords, toCsv, recordWidth};')();
 
 const rec = (t, v, r) => [t & 255, (t >>> 8) & 255, (t >>> 16) & 255, (t >>> 24) & 255, v & 255, v >> 8, r & 255, (r >> 8) & 255];
 
@@ -41,5 +42,10 @@ assert.deepStrictEqual(P.fromBase64Url(b64.slice(0, 3) + '<>"\'' + b64.slice(3))
 const csv = P.toCsv([{ t: 1790000100, v: 41, r: 3, manual: true }, { t: 1790000000, v: 38, r: null, manual: false }]);
 assert.strictEqual(csv, 'timestamp,iso_time,rmssd_ms,artefacts_removed,manual\n' +
   '1790000000,2026-09-21T14:13:20.000Z,38,,0\n1790000100,2026-09-21T14:15:00.000Z,41,3,1\n');
+
+// Only the two formats any build has sent are read; anything else is refused.
+assert.strictEqual(P.recordWidth('1'), 6);
+assert.strictEqual(P.recordWidth('2'), 8);
+for (const v of ['3', '9', '', undefined, '2 ', '02', 'x']) assert.strictEqual(P.recordWidth(v), 0, String(v));
 
 console.log('decode tests passed');

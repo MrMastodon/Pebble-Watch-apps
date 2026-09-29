@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<!-- The page needs nothing but its own inline script and style, plus data:
+     for the CSV download. Everything else is refused, so even a future
+     mistake that let text from the link be parsed as HTML could not load or
+     send anything. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>Restful HRV</title>
 <style>
   :root {
@@ -652,6 +657,8 @@
     card.appendChild(el('summary', null, 'Diagnostics'));
 
     var never = function (ts) { return ts ? fmtDateTime(ts) : 'never'; };
+    // The watch's counters stop at 65,535 rather than wrapping round to zero.
+    var num = function (v) { return v >= 65535 ? '65,535+' : String(v); };
     var outcomes = { 0: 'none yet', 1: 'recorded', 2: 'too few readings',
                      3: 'switched off', 4: 'no intervals', 5: 'died computing',
                      6: 'cancelled' };
@@ -660,15 +667,15 @@
       ['Worker last alive', never(status.lastTickAt), !status.lastTickAt],
       ['Asleep', never(status.sleepLastSeenAt), !status.sleepLastSeenAt],
       ['Restful sleep', never(status.restfulLastSeenAt), !status.restfulLastSeenAt],
-      ['Sleep events', String(status.sleepEvents), false],
-      ['HRV readings, all day', String(status.hrvEvents), false],
+      ['Sleep events', num(status.sleepEvents), false],
+      ['HRV readings, all day', num(status.hrvEvents), false],
       // The all-day figure counts every reading the sensor produced for anyone.
       // Only this one is about our own measurement windows.
       ['While measuring', status.hrvEventsMeasuring === null || status.hrvEventsMeasuring === undefined
-        ? 'not recorded' : String(status.hrvEventsMeasuring),
+        ? 'not recorded' : num(status.hrvEventsMeasuring),
        status.hrvEventsMeasuring === 0],
-      ['Of those, empty', String(status.hrvZeroEvents || 0), (status.hrvZeroEvents || 0) > 0],
-      ['Measurements started', String(status.episodes), false],
+      ['Of those, empty', num(status.hrvZeroEvents || 0), (status.hrvZeroEvents || 0) > 0],
+      ['Measurements started', num(status.episodes), false],
       ['Sample period granted', status.episodes === 0 ? 'not requested'
         : (status.hrvRequestOk ? 'yes' : 'no'), status.episodes > 0 && !status.hrvRequestOk],
       ['Last result', outcomes[status.lastOutcome] || 'unknown',
@@ -714,10 +721,34 @@
   // night the reader had opened.
   var chart = null;
 
+  // Every build of the phone side has said which record format it sent: v=1
+  // for six-byte records, v=2 for eight. Anything else is from a format this
+  // page does not know, and reading it as one it does would show nonsense.
+  function recordWidth(version) {
+    if (version === '2') return RECORD_BYTES_V2;
+    if (version === '1') return RECORD_BYTES_V1;
+    return 0;
+  }
+
   function render() {
     var params = parseHash();
-    var records = decodeRecords(fromBase64Url(params.d || ''),
-                                params.v === '2' ? RECORD_BYTES_V2 : RECORD_BYTES_V1);
+    var width = recordWidth(params.v);
+    if (params.d && !width) {
+      var content0 = document.getElementById('content');
+      content0.innerHTML = '';
+      chart = null;
+      var unknown = el('div', 'card');
+      var unknownInner = el('div', 'empty');
+      unknownInner.appendChild(el('strong', null, 'Newer data than this page understands'));
+      unknownInner.appendChild(el('div', null,
+        'This link was made by a newer version of Restful HRV than this page can ' +
+        'read. Update the app on the watch, then open its settings again.'));
+      unknown.appendChild(unknownInner);
+      content0.appendChild(unknown);
+      document.getElementById('sub').textContent = 'Measurements taken during restful sleep.';
+      return;
+    }
+    var records = decodeRecords(fromBase64Url(params.d || ''), width || RECORD_BYTES_V2);
     var clearing = params.clearing === '1';
     var status = null;
     try {
@@ -979,6 +1010,12 @@
         'lines, and a cut link opens with measurements missing. Like any page, ' +
         'it stays in the browser\u2019s history.'));
     }
+    // Copying is the one way the numbers leave this page, so it is said
+    // where the buttons are.
+    actions.appendChild(el('p', 'note',
+      'Copying puts your measurements on the phone\u2019s clipboard, where other ' +
+      'apps may be able to read them until you copy something else.'));
+
     // The link points at GitHub, so the obvious worry is that the numbers
     // end up there. Said plainly, with the two things that are true the other
     // way: GitHub sees the visit, and the link is the data.
@@ -1044,6 +1081,15 @@
       // Handing the request back to PebbleKit JS, which relays it to the watch.
       document.location = 'pebblejs://close#' +
         encodeURIComponent(JSON.stringify({ clear: true }));
+      // Inside the Pebble app that closes this page. If it is still open a
+      // couple of seconds later, this is some other app's web view that looks
+      // like the Pebble app, and nothing was deleted - say so rather than sit
+      // on "Deleting...".
+      setTimeout(function () {
+        btn.textContent = 'Not deleted';
+        note.textContent = 'Deleting only works from the settings page inside the ' +
+          'Pebble app. Nothing was deleted here.';
+      }, 2000);
     });
 
     card.appendChild(btn);

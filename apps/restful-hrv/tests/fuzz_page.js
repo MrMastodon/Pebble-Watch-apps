@@ -38,6 +38,7 @@ const cases = {
   'status is a number': `v=2&d=${good}&s=42`,
   'status is null': `v=2&d=${good}&s=null`,
   'unknown version': `v=9&d=${good}`,
+  'no version': `d=${good}`,
   'v1 with odd length': `v=1&d=${b64(randomBytes(13))}`,
   'random bytes': `v=2&d=${b64(randomBytes(4000))}`,
   'timestamps at the extremes': `v=2&d=${b64([].concat(rec(0, 1, 0), rec(0xFFFFFFFF, 65535, 0xFFFF)))}`,
@@ -60,14 +61,21 @@ const cases = {
       page.on('pageerror', e => errors.push(e.message));
       page.on('dialog', d => { errors.push('dialog: ' + d.message()); d.dismiss(); });
       page.on('request', r => { if (!r.url().startsWith(PAGE)) requests.push(r.url()); });
+      // The page's Content-Security-Policy must never have to block anything
+      // the page itself does: a violation means the policy broke the page.
+      await page.addInitScript(() => {
+        window.__csp = [];
+        document.addEventListener('securitypolicyviolation', e => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));
+      });
       await page.goto(PAGE + '#' + fragment);
       await page.waitForTimeout(150);
       const state = await page.evaluate(() => ({
+        csp: window.__csp,
         pwned: !!window.__pwned,
         images: document.querySelectorAll('img').length,
         rendered: document.getElementById('content') !== null && document.body.innerText.length > 0,
       }));
-      const bad = state.pwned || state.images || !state.rendered || errors.length || requests.length;
+      const bad = state.pwned || state.images || !state.rendered || state.csp.length || errors.length || requests.length;
       if (bad) failures++;
       console.log(`${bad ? 'FAIL' : 'ok  '} ${name}${inApp ? ' (in app)' : ''}` +
                   (bad ? ' ' + JSON.stringify({ state, errors, requests }) : ''));
