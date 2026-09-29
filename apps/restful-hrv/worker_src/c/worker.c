@@ -64,6 +64,20 @@ static uint16_t s_ppi_count;
 static bool s_measuring;
 static time_t s_measure_start;
 
+// Second ticks seen during the current measurement. The window is normally
+// timed by the wall clock, but a clock set back by the phone would otherwise
+// stretch it - and hold the sensor - until the clock caught up. This bounds it.
+static uint16_t s_measure_ticks;
+#define MEASURE_MAX_TICKS (HRV_MEASURE_DURATION_SEC + 5)
+
+// Empty readings counted before this measurement began, so "no intervals" can
+// be about this measurement and not about any empty reading ever.
+static uint16_t s_zero_at_start;
+
+// During a Measure now the diagnostics are written this often, so the app can
+// show progress without a flash write every second.
+#define MANUAL_FLUSH_EVERY_SEC 2
+
 // A measurement the user asked for from the app, rather than one restful sleep
 // triggered. It runs the same code on the same sensor subscription - the only
 // difference is that it is not cancelled by not being asleep.
@@ -74,9 +88,19 @@ static bool s_manual;
 // finishing a measurement mid-episode does not immediately start another.
 static bool s_was_restful;
 
-// Last seen state of the plain sleep bit, only so that its changes can be told
-// apart from it merely still being set.
+// Last seen state of the plain sleep and restful bits for the diagnostics, only
+// so that their changes can be told apart from them merely still being set.
+// Separate from s_was_restful, which is about triggering a measurement.
 static bool s_was_asleep;
+static bool s_diag_was_restful;
+
+// Counters saturate rather than wrap: a count that has reached its ceiling and
+// says so is more honest than one that silently starts again from zero.
+// Takes and returns the value rather than a pointer: the diagnostics struct is
+// packed, and a pointer to one of its members may be unaligned.
+static uint16_t prv_count(uint16_t counter) {
+  return (counter < UINT16_MAX) ? (uint16_t)(counter + 1) : counter;
+}
 
 static bool prv_hrv_enabled(void) {
   if (!persist_exists(PERSIST_KEY_HRV_ENABLED)) {
@@ -216,6 +240,8 @@ static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms, uint16_t r
 static void prv_start_measurement(void) {
   s_ppi_count = 0;
   s_measure_start = time(NULL);
+  s_measure_ticks = 0;
+  s_zero_at_start = s_diag.hrv_zero_events;
   s_measuring = true;
 
   // The return value matters: if the sensor will not grant the sample period
@@ -223,7 +249,7 @@ static void prv_start_measurement(void) {
   bool granted = health_service_set_hrv_sample_period(HRV_SAMPLE_PERIOD_SEC);
   tick_timer_service_subscribe(MEASURING_TICK_UNIT, prv_tick_handler);
 
-  s_diag.episodes++;
+  s_diag.episodes = prv_count(s_diag.episodes);
   s_diag.hrv_request_ok = granted ? 1 : 0;
   prv_diag_flush();
 
@@ -283,9 +309,10 @@ static void prv_stop_measurement(void) {
     s_diag.last_outcome = HRV_OUTCOME_LOGGED;
   } else if (!prv_hrv_enabled()) {
     s_diag.last_outcome = HRV_OUTCOME_DISABLED;
-  } else if (s_ppi_count == 0 && s_diag.hrv_zero_events > 0) {
-    // The sensor was talking to us throughout and every reading came back
-    // empty. Distinct from a sparse signal, and worth saying so.
+  } else if (s_ppi_count == 0 && s_diag.hrv_zero_events != s_zero_at_start) {
+    // The sensor was talking to us throughout this measurement and every
+    // reading came back empty. Distinct from a sparse signal - and from no
+    // readings at all - and worth saying so.
     s_diag.last_outcome = HRV_OUTCOME_NO_INTERVALS;
   } else {
     s_diag.last_outcome = HRV_OUTCOME_TOO_FEW;
@@ -327,10 +354,11 @@ static void prv_evaluate_sleep_state(void) {
   if (is_restful) {
     s_diag.restful_last_seen_at = now;
   }
-  if (asleep != s_was_asleep || is_restful != s_was_restful) {
+  if (asleep != s_was_asleep || is_restful != s_diag_was_restful) {
     prv_diag_flush();
   }
   s_was_asleep = asleep;
+  s_diag_was_restful = is_restful;
 
   if (s_measuring) {
     // A manual measurement is deliberately not tied to the sleep state, or it
@@ -344,7 +372,12 @@ static void prv_evaluate_sleep_state(void) {
     prv_start_measurement();
   }
 
-  s_was_restful = is_restful;
+  // Not updated during a Measure now: restful sleep that begins while one is
+  // running must still look like a new episode once it has finished, or the
+  // episode would never get a measurement of its own.
+  if (!(s_measuring && s_manual)) {
+    s_was_restful = is_restful;
+  }
 }
 
 static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
@@ -363,13 +396,19 @@ static void prv_tick_handler(struct tm *tick_time, TimeUnits units_changed) {
       prv_stop_measurement();
       return;
     }
-    // Flushed every second while the user is watching the numbers move.
-    if (s_manual) {
+    // A measurement subscribes to second ticks, so each tick here is a second.
+    s_measure_ticks++;
+    // Flushed every couple of seconds while the user is watching the numbers
+    // move.
+    if (s_manual && s_measure_ticks % MANUAL_FLUSH_EVERY_SEC == 0) {
       prv_diag_flush();
     }
-    // Measured against the wall clock rather than counted in ticks, so a tick
-    // the worker misses under load does not stretch the window.
-    if (time(NULL) - s_measure_start >= HRV_MEASURE_DURATION_SEC) {
+    // Measured against the wall clock, so a tick the worker misses under load
+    // does not stretch the window. A clock that has gone backwards counts as
+    // elapsed, and the tick count caps the window whatever the clock does.
+    time_t elapsed = time(NULL) - s_measure_start;
+    if (elapsed < 0 || elapsed >= HRV_MEASURE_DURATION_SEC ||
+        s_measure_ticks >= MEASURE_MAX_TICKS) {
       prv_stop_measurement();
       // s_was_restful deliberately left set: the episode is still running, and
       // it has already had its measurement.
@@ -403,9 +442,9 @@ static void prv_health_handler(HealthEventType event, void *context) {
       // different fault from producing too few to use.
       // Counted separately because this one arrives whether or not we asked:
       // the health service broadcasts every HRV reading to all subscribers.
-      s_diag.hrv_events++;
+      s_diag.hrv_events = prv_count(s_diag.hrv_events);
       if (s_measuring) {
-        s_diag.hrv_events_measuring++;
+        s_diag.hrv_events_measuring = prv_count(s_diag.hrv_events_measuring);
       }
       if (s_measuring && s_ppi_count < PPI_BUFFER_SIZE) {
         uint16_t ppi = health_service_peek_hrv_ppi_ms();
@@ -415,12 +454,12 @@ static void prv_health_handler(HealthEventType event, void *context) {
           // Counted, not just skipped: the driver only sends a zero from its
           // not-being-worn branch, so the count says how much of the window the
           // watch spent believing that - which is the measurement we lack.
-          s_diag.hrv_zero_events++;
+          s_diag.hrv_zero_events = prv_count(s_diag.hrv_zero_events);
         }
       }
       break;
     case HealthEventSleepUpdate:
-      s_diag.sleep_events++;
+      s_diag.sleep_events = prv_count(s_diag.sleep_events);
       prv_evaluate_sleep_state();
       break;
     case HealthEventSignificantUpdate:
