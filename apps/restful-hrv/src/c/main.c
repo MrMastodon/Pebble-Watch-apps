@@ -57,6 +57,7 @@ static char s_diag_text[640];
 typedef enum {
   MEASURE_INTRO,       // instructions, waiting for SELECT
   MEASURE_OFF,         // measuring is switched off, so there is no worker
+  MEASURE_NO_WORKER,   // switched on, but the worker is not running
   MEASURE_RUNNING,     // counting down
   MEASURE_CONFIRM,     // BACK pressed while running: cancel?
   MEASURE_BUSY,        // the worker was already measuring restful sleep
@@ -566,7 +567,24 @@ static uint16_t prv_measure_empty_beats(void) {
 
 static int prv_measure_remaining(void) {
   int left = HRV_MEASURE_DURATION_SEC - (int)(time(NULL) - s_measure_start);
-  return (left < 0) ? 0 : left;
+  // Clamped both ways: a clock set back would otherwise show more than the
+  // two minutes (and the worker ends the window then anyway).
+  if (left < 0) {
+    return 0;
+  }
+  return (left > HRV_MEASURE_DURATION_SEC) ? HRV_MEASURE_DURATION_SEC : left;
+}
+
+// Why Measure now cannot start, if it cannot. Measuring switched off and a
+// worker that is not running are different problems with different fixes:
+// the worker can be stopped while measuring is on - just after switching on,
+// while the system asks whether to replace another app's background worker,
+// or after another app's worker has taken the single background slot.
+static MeasureState prv_measure_blocked(void) {
+  if (!s_enabled) {
+    return MEASURE_OFF;
+  }
+  return app_worker_is_running() ? MEASURE_INTRO : MEASURE_NO_WORKER;
 }
 
 static void prv_measure_set_state(MeasureState state) {
@@ -634,8 +652,9 @@ static void prv_measure_tick(void *data) {
 }
 
 static void prv_measure_start(void) {
-  if (!app_worker_is_running()) {
-    prv_measure_set_state(MEASURE_OFF);
+  MeasureState blocked = prv_measure_blocked();
+  if (blocked != MEASURE_INTRO) {
+    prv_measure_set_state(blocked);
     return;
   }
   prv_load_diagnostics(&s_measure_diag0);
@@ -728,6 +747,13 @@ static void prv_measure_update_proc(Layer *layer, GContext *ctx) {
       prv_draw_text(ctx, "Turn it on first with SELECT on the main screen.",
                     FONT_KEY_GOTHIC_18, box, GColorBlack);
       break;
+    case MEASURE_NO_WORKER:
+      box.origin.y += prv_draw_text(ctx, "Not running", FONT_KEY_GOTHIC_24_BOLD, box, GColorBlack);
+      box.origin.y += 6;
+      prv_draw_text(ctx, "Measuring is on, but the background worker is not running. "
+                    "Reopen the app, or check whether another app's background "
+                    "worker has replaced it.", FONT_KEY_GOTHIC_18, box, GColorBlack);
+      break;
     case MEASURE_RUNNING:
       prv_measure_draw_ring(ctx, bounds);
       break;
@@ -819,7 +845,7 @@ static void prv_measure_window_unload(Window *window) {
 }
 
 static void prv_show_measure(void) {
-  s_measure_state = app_worker_is_running() ? MEASURE_INTRO : MEASURE_OFF;
+  s_measure_state = prv_measure_blocked();
   s_measure_window = window_create();
   window_set_click_config_provider(s_measure_window, prv_measure_click_config);
   window_set_window_handlers(s_measure_window, (WindowHandlers) {

@@ -83,7 +83,9 @@ sample rate, as a night measurement:
   it and stores nothing, and SELECT carries on. Leaving the app any other way
   lets the background worker finish, and the result still lands in the history.
 - **Measuring must be switched on**, since the worker is what measures. If it
-  is off, the screen says so and starts nothing.
+  is off, the screen says so and starts nothing. If it is on but the worker is
+  not running - just after switching on, or because another app's background
+  worker has taken the single slot - the screen says that instead.
 - **If a restful sleep measurement is already running,** the screen says so
   instead of starting a second one.
 
