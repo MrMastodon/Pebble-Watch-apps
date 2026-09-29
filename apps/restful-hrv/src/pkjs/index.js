@@ -3,7 +3,9 @@
 // The background worker takes the measurements, but background workers have no
 // AppMessage, so the only moment the phone can learn about them is while the
 // watchapp itself is open. The watchapp pushes its whole history then; this
-// file caches it, and hands it to the settings page when that is opened.
+// file caches it, and hands it to the settings page when that is opened. The
+// history arrives in several messages of up to 32 records; each is merged on
+// its own, so a transfer cut short still keeps what got through.
 //
 // Nothing here talks to a server. The settings page is a static file and the
 // measurements travel to it in the URL fragment, which browsers never send to
@@ -67,10 +69,11 @@ function decodeRecords(bytes) {
   return records;
 }
 
-// Merges rather than replaces. The watch only keeps its last 40, and its
-// storage can be wiped entirely, so an incoming batch is new information about
-// the past - never the whole of it. Replacing would quietly discard everything
-// older than the watch happens to be holding.
+// Merges rather than replaces. The watch keeps at most its last 128, sends
+// them in chunks of 32 (each merged as it arrives), and its storage can be
+// wiped entirely, so an incoming batch is new information about the past -
+// never the whole of it. Replacing would quietly discard everything older than
+// the watch happens to be holding.
 function mergeRecords(incoming) {
   var byTime = {};
   var existing = loadRecords();

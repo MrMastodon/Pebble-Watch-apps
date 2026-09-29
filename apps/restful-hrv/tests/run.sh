@@ -15,7 +15,7 @@ step() {
 }
 
 step "RMSSD in the worker vs the reference" python3 "$here/rmssd_test.py"
-step "A simulated night through the real worker" "$here/worker_sim/run.sh"
+step "The real worker through six simulated scenarios" "$here/worker_sim/run.sh"
 step "Settings page statistics vs the reference" env TZ=Europe/Oslo node "$here/page_stats.test.js"
 step "Settings page decoding and CSV" node "$here/decode.test.js"
 

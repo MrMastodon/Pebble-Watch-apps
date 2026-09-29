@@ -12,6 +12,7 @@
 //   clock     the clock is set back ten minutes during a Measure now
 //   overlap   restful sleep begins while a Measure now is running
 //   capacity  140 Measure now in a row, more than the watch can hold
+//   corrupt   the stored history is shorter than its count says
 #include <stdarg.h>
 #include <stdlib.h>
 #include "pebble_worker.h"
@@ -181,6 +182,7 @@ static void scenario_overlap(void) {
 static int s_append_writes_max;
 static void scenario_capacity(void) {
   int t = 0;
+  s_now = START;
   for (int n = 0; n < 140; n++) {
     send(WORKER_CMD_MEASURE_NOW);
     int before = total_writes() - s_writes[PERSIST_KEY_DIAG];
@@ -192,12 +194,31 @@ static void scenario_capacity(void) {
   }
 }
 
+// 40 measurements, then the second chunk loses all but 3 of its 8 records
+// while the count still says 40. The next measurement must keep the 35 that
+// are readable instead of starting again from nothing.
+static int s_corrupt_before;
+static void scenario_corrupt(void) {
+  static const uint32_t keys[] = HRV_HISTORY_KEYS;
+  int t = 0;
+  s_now = START;
+  for (int n = 0; n < 41; n++) {
+    if (n == 40) {
+      s_store_len[keys[1]] = 3 * sizeof(HrvRecord);
+      s_corrupt_before = persist_read_int(PERSIST_KEY_HISTORY_COUNT);
+    }
+    send(WORKER_CMD_MEASURE_NOW);
+    for (int i = 0; i < 125; i++, t++) step(START + t, 0, t);
+  }
+}
+
 void worker_event_loop(void) {
   if (!strcmp(s_scenario, "night")) scenario_night();
   else if (!strcmp(s_scenario, "zero")) scenario_zero();
   else if (!strcmp(s_scenario, "clock")) scenario_clock();
   else if (!strcmp(s_scenario, "overlap")) scenario_overlap();
   else if (!strcmp(s_scenario, "capacity")) scenario_capacity();
+  else if (!strcmp(s_scenario, "corrupt")) scenario_corrupt();
   else { printf("unknown scenario %s\n", s_scenario); exit(2); }
 }
 
@@ -246,6 +267,13 @@ int main(int argc, char **argv) {
     EXPECT(ordered, "oldest first, timestamps strictly increasing");
     EXPECT(count > 0 && (time_t)s_hist[count - 1].timestamp >= s_now - 10, "the newest measurement is the last one");
     EXPECT(s_append_writes_max <= 2, "an ordinary append writes one chunk and the count");
+    EXPECT(count == 108, "128, then the oldest 32 dropped, then 12 more");
+  } else if (!strcmp(s_scenario, "corrupt")) {
+    bool ordered = true;
+    for (int i = 1; i < count; i++) ordered &= s_hist[i].timestamp > s_hist[i - 1].timestamp;
+    printf("  count said %d, chunk 1 cut to 3 records; after one more: %d\n", s_corrupt_before, count);
+    EXPECT(count == 32 + 3 + 1, "the readable records kept, plus the new one");
+    EXPECT(ordered, "still oldest first");
   }
   printf(s_failures ? "  %d checks failed\n" : "  all checks passed\n", s_failures);
   return s_failures ? 1 : 0;

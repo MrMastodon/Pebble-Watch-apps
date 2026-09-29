@@ -80,18 +80,26 @@ typedef struct __attribute__((__packed__)) {
 #define HRV_REJECTED_MANUAL_FLAG 0x8000
 #define HRV_REJECTED_COUNT_MASK 0x7FFF
 
-// A persist value tops out at PERSIST_DATA_MAX_LENGTH (256 bytes), so the whole
-// history fits in one key at this size - no splitting across keys, no partial
-// writes to reason about. 32 eight-byte records fill it exactly: about a week
-// and a half at three or four restful sleep episodes a night. The phone keeps
-// far more, so this is only the watch's own recent view.
-#define HRV_HISTORY_CAPACITY 32
+// A persist value tops out at PERSIST_DATA_MAX_LENGTH (256 bytes), which is
+// exactly 32 records. The history is spread over four such chunks, 128 records
+// in all: about a month at three or four restful sleep episodes a night. That
+// is how long the watch can go without the app being opened - the only moment
+// the history can reach the phone - before measurements are lost.
+//
+// Chunk 0 is PERSIST_KEY_HISTORY, the key that held the whole history when it
+// was a single chunk, so a history written by an earlier build is read as it
+// is. Keys 7-9 hold the rest.
+#define HRV_HISTORY_CHUNK 32
+#define HRV_HISTORY_CHUNKS 4
+#define HRV_HISTORY_CAPACITY (HRV_HISTORY_CHUNK * HRV_HISTORY_CHUNKS)
+#define HRV_HISTORY_CHUNK_BYTES (HRV_HISTORY_CHUNK * sizeof(HrvRecord))
+#define HRV_HISTORY_KEYS { PERSIST_KEY_HISTORY, 7, 8, 9 }
 
-// Oldest first, so the newest record is always the last one. That costs a
-// memmove per measurement, which happens a handful of times a night, and buys
-// not having to track a head index in a second persist key that could fall out
-// of step with the array.
-#define HRV_HISTORY_BYTES (HRV_HISTORY_CAPACITY * sizeof(HrvRecord))
+// Oldest first, so the newest record is always the last one. When the history
+// is full, the oldest whole chunk is dropped at once rather than one record at
+// a time: an ordinary append then rewrites only the chunk it lands in, and the
+// shift that rewrites every chunk happens once every 32 measurements. The watch
+// therefore holds between 96 and 128 measurements once it has filled up.
 
 // What became of the most recent measurement. Values are persisted, so existing
 // ones must keep their meaning.

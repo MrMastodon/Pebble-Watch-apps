@@ -200,30 +200,62 @@ static uint32_t prv_compute_rmssd_ms(uint16_t *rejected_out) {
 }
 
 // Static rather than on the stack. A worker's stack is small enough that a
-// floating-point sqrt() once killed it outright; a 256-byte local array is the
-// same kind of risk for no benefit.
+// floating-point sqrt() once killed it outright; a kilobyte of local array is
+// the same kind of risk for no benefit.
 static HrvRecord s_history_scratch[HRV_HISTORY_CAPACITY];
+static const uint32_t s_history_keys[HRV_HISTORY_CHUNKS] = HRV_HISTORY_KEYS;
+
+// Reads as much of the stored history as is really there. If the count says
+// more than the chunks hold - the two fell out of step, or a chunk is short -
+// the records that can be read are kept rather than the whole history dropped.
+static int prv_read_history(HrvRecord *history) {
+  int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
+      ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
+  if (count < 0) {
+    count = 0;
+  }
+  if (count > HRV_HISTORY_CAPACITY) {
+    count = HRV_HISTORY_CAPACITY;
+  }
+  int have = 0;
+  for (int c = 0; c < HRV_HISTORY_CHUNKS && have < count; c++) {
+    int want = count - have;
+    if (want > HRV_HISTORY_CHUNK) {
+      want = HRV_HISTORY_CHUNK;
+    }
+    int read = persist_read_data(s_history_keys[c], &history[have], want * sizeof(HrvRecord));
+    int got = (read > 0) ? read / (int)sizeof(HrvRecord) : 0;
+    have += got;
+    if (got < want) {
+      break;
+    }
+  }
+  return have;
+}
+
+static void prv_write_chunk(const HrvRecord *history, int count, int chunk) {
+  int first = chunk * HRV_HISTORY_CHUNK;
+  int n = count - first;
+  if (n > HRV_HISTORY_CHUNK) {
+    n = HRV_HISTORY_CHUNK;
+  }
+  if (n > 0) {
+    persist_write_data(s_history_keys[chunk], &history[first], n * sizeof(HrvRecord));
+  }
+}
 
 static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms, uint16_t rejected) {
   HrvRecord *history = s_history_scratch;
-  int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
-      ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
+  int count = prv_read_history(history);
 
-  // A count that disagrees with what is actually stored means the two keys fell
-  // out of step - start over rather than read past the data that is really there.
-  if (count < 0 || count > HRV_HISTORY_CAPACITY) {
-    count = 0;
-  }
-  if (count > 0) {
-    int read = persist_read_data(PERSIST_KEY_HISTORY, history, sizeof(s_history_scratch));
-    if (read < (int)(count * sizeof(HrvRecord))) {
-      count = 0;
-    }
-  }
-
+  // Full: drop the oldest whole chunk, so that ordinary appends touch only one
+  // chunk and this rewrite of all of them happens once every 32 measurements.
+  bool shifted = false;
   if (count == HRV_HISTORY_CAPACITY) {
-    memmove(&history[0], &history[1], (HRV_HISTORY_CAPACITY - 1) * sizeof(HrvRecord));
-    count = HRV_HISTORY_CAPACITY - 1;
+    memmove(&history[0], &history[HRV_HISTORY_CHUNK],
+            (HRV_HISTORY_CAPACITY - HRV_HISTORY_CHUNK) * sizeof(HrvRecord));
+    count = HRV_HISTORY_CAPACITY - HRV_HISTORY_CHUNK;
+    shifted = true;
   }
 
   history[count].timestamp = timestamp;
@@ -233,7 +265,15 @@ static void prv_append_history(uint32_t timestamp, uint32_t rmssd_ms, uint16_t r
   history[count].rejected = rejected;
   count++;
 
-  persist_write_data(PERSIST_KEY_HISTORY, history, count * sizeof(HrvRecord));
+  if (shifted) {
+    for (int c = 0; c < HRV_HISTORY_CHUNKS; c++) {
+      prv_write_chunk(history, count, c);
+    }
+  } else {
+    prv_write_chunk(history, count, (count - 1) / HRV_HISTORY_CHUNK);
+  }
+  // Written last: a count that is short of the data loses nothing, one that
+  // runs ahead of it is caught by prv_read_history().
   persist_write_int(PERSIST_KEY_HISTORY_COUNT, count);
 }
 

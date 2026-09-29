@@ -21,9 +21,9 @@
 #define WORKER_POLL_INTERVAL_MS 500
 #define WORKER_POLL_ATTEMPTS 8
 
-// The history is sent to the phone as one byte array, so the outbox has to fit
-// the whole thing plus dictionary overhead in a single message.
-#define OUTBOX_SIZE (HRV_HISTORY_BYTES + sizeof(HrvDiagnostics) + 96)
+// The history is sent to the phone one chunk (32 records) per message, the
+// diagnostics riding along with the first, so the outbox only has to fit that.
+#define OUTBOX_SIZE (HRV_HISTORY_CHUNK_BYTES + sizeof(HrvDiagnostics) + 96)
 #define INBOX_SIZE 128
 
 // One retry, because the usual reason a send fails is that the phone connection
@@ -87,6 +87,12 @@ static char s_worker_text[32];
 
 static HrvRecord s_history[HRV_HISTORY_CAPACITY];
 static int s_history_count;
+static const uint32_t s_history_keys[HRV_HISTORY_CHUNKS] = HRV_HISTORY_KEYS;
+
+// The next chunk to send in the current transfer to the phone, or -1 when none
+// is under way. Each chunk goes when the phone has acknowledged the previous
+// one, since AppMessage takes one outgoing message at a time.
+static int s_send_next_chunk = -1;
 
 static bool prv_read_enabled(void) {
   if (!persist_exists(PERSIST_KEY_HRV_ENABLED)) {
@@ -95,23 +101,36 @@ static bool prv_read_enabled(void) {
   return persist_read_bool(PERSIST_KEY_HRV_ENABLED);
 }
 
-// Reads the worker's history into s_history. Kept newest-last in storage, which
-// is the order the list wants reversed, so the menu indexes it backwards.
+// Reads the worker's history into s_history, chunk by chunk. Kept newest-last in
+// storage, which is the order the list wants reversed, so the menu indexes it
+// backwards.
 static void prv_load_history(void) {
   s_history_count = 0;
 
   int count = persist_exists(PERSIST_KEY_HISTORY_COUNT)
       ? persist_read_int(PERSIST_KEY_HISTORY_COUNT) : 0;
-  if (count <= 0 || count > HRV_HISTORY_CAPACITY) {
+  if (count <= 0) {
     return;
   }
-
-  int read = persist_read_data(PERSIST_KEY_HISTORY, s_history, sizeof(s_history));
-  if (read < (int)(count * sizeof(HrvRecord))) {
-    // The count and the array disagree; trust the bytes that are actually there.
-    count = (read > 0) ? (read / (int)sizeof(HrvRecord)) : 0;
+  if (count > HRV_HISTORY_CAPACITY) {
+    count = HRV_HISTORY_CAPACITY;
   }
-  s_history_count = count;
+
+  // If the count and the chunks disagree, trust the records actually there.
+  int have = 0;
+  for (int c = 0; c < HRV_HISTORY_CHUNKS && have < count; c++) {
+    int want = count - have;
+    if (want > HRV_HISTORY_CHUNK) {
+      want = HRV_HISTORY_CHUNK;
+    }
+    int read = persist_read_data(s_history_keys[c], &s_history[have], want * sizeof(HrvRecord));
+    int got = (read > 0) ? read / (int)sizeof(HrvRecord) : 0;
+    have += got;
+    if (got < want) {
+      break;
+    }
+  }
+  s_history_count = have;
 }
 
 // ---------------------------------------------------------------- phone bridge
@@ -132,14 +151,18 @@ static bool prv_load_diagnostics(HrvDiagnostics *diag) {
 // storage outright, and the phone is what decides to remove it - so everything
 // on the watch is one locker sync away from being gone. The copy on the phone
 // is the durable one.
-static void prv_send_history_to_phone(void) {
+// Sends one chunk of the history; the diagnostics go with the first. Returns
+// false if the outbox could not be opened, which ends the transfer.
+static bool prv_send_chunk(int chunk) {
   HrvDiagnostics diag;
-  bool have_diag = prv_load_diagnostics(&diag);
-
-  // Sent even with nothing measured: a night that produced no measurements is
-  // exactly when the status is worth having off the watch.
-  if (s_history_count == 0 && !have_diag) {
-    return;
+  bool have_diag = (chunk == 0) && prv_load_diagnostics(&diag);
+  int first = chunk * HRV_HISTORY_CHUNK;
+  int n = s_history_count - first;
+  if (n > HRV_HISTORY_CHUNK) {
+    n = HRV_HISTORY_CHUNK;
+  }
+  if (n <= 0 && !have_diag) {
+    return false;
   }
 
   DictionaryIterator *iter;
@@ -148,16 +171,47 @@ static void prv_send_history_to_phone(void) {
     // Usually APP_MSG_BUSY from the two send triggers racing each other, which
     // is harmless - whichever one won is carrying the same data.
     APP_LOG(APP_LOG_LEVEL_INFO, "History send skipped, AppMessageResult %d", (int)begin);
-    return;
+    return false;
   }
-  if (s_history_count > 0) {
-    dict_write_data(iter, MESSAGE_KEY_HrvHistory, (const uint8_t *)s_history,
-                    s_history_count * sizeof(HrvRecord));
+  if (n > 0) {
+    dict_write_data(iter, MESSAGE_KEY_HrvHistory, (const uint8_t *)&s_history[first],
+                    n * sizeof(HrvRecord));
   }
   if (have_diag) {
     dict_write_data(iter, MESSAGE_KEY_HrvStatus, (const uint8_t *)&diag, sizeof(diag));
   }
   app_message_outbox_send();
+  return true;
+}
+
+// Starts a transfer of the whole history. The phone merges each chunk into its
+// own copy as it arrives, so a transfer cut short still delivers every chunk
+// that got through.
+static void prv_send_history_to_phone(void) {
+  // The two send triggers can both fire while a transfer is running. Starting
+  // again would find the outbox busy and end the one already under way, so
+  // the second simply lets the first finish. Every transfer ends in an
+  // acknowledgement or a failure, and both clear this.
+  if (s_send_next_chunk >= 0) {
+    return;
+  }
+  // Sent even with nothing measured: a night that produced no measurements is
+  // exactly when the status is worth having off the watch.
+  s_send_next_chunk = prv_send_chunk(0) ? 1 : -1;
+}
+
+// Called once the phone has acknowledged a message: sends the next chunk, if
+// the transfer has one.
+static void prv_send_next_chunk(void) {
+  if (s_send_next_chunk < 0) {
+    return;
+  }
+  if (s_send_next_chunk * HRV_HISTORY_CHUNK >= s_history_count ||
+      !prv_send_chunk(s_send_next_chunk)) {
+    s_send_next_chunk = -1;
+    return;
+  }
+  s_send_next_chunk++;
 }
 
 static void prv_send_retry(void *data) {
@@ -180,9 +234,13 @@ static void prv_initial_send(void *data) {
 // alone: they are about the worker's behaviour, not about your data, and they
 // are what any remaining investigation depends on.
 static void prv_clear_history(void) {
-  persist_delete(PERSIST_KEY_HISTORY);
+  for (int c = 0; c < HRV_HISTORY_CHUNKS; c++) {
+    persist_delete(s_history_keys[c]);
+  }
   persist_delete(PERSIST_KEY_HISTORY_COUNT);
   s_history_count = 0;
+  // Nothing left to send; a transfer under way stops here.
+  s_send_next_chunk = -1;
   APP_LOG(APP_LOG_LEVEL_INFO, "History cleared at the phone's request");
 }
 
@@ -219,11 +277,14 @@ static void prv_outbox_sent_handler(DictionaryIterator *iter, void *context) {
   // the one operation where the log matters most.
   APP_LOG(APP_LOG_LEVEL_INFO, "Phone acknowledged; history now %d measurements",
           s_history_count);
+  prv_send_next_chunk();
 }
 
 static void prv_outbox_failed_handler(DictionaryIterator *iter, AppMessageResult reason,
                                       void *context) {
   APP_LOG(APP_LOG_LEVEL_ERROR, "History send failed, AppMessageResult %d", (int)reason);
+  // The transfer stops here; a retry starts it again from the first chunk.
+  s_send_next_chunk = -1;
 
   // Almost always "the phone was not connected yet at launch", so one retry a
   // few seconds later is worth it. Beyond that, the next time the app is opened

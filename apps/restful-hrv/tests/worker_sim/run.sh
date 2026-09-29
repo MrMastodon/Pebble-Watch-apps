@@ -12,7 +12,7 @@ gcc -std=gnu11 -O1 -Wall -I"$here" -c "$here/sim.c" -o "$out/sim.o" || exit 1
 gcc "$out/worker.o" "$out/sim.o" -o "$out/sim" || exit 1
 if [ $# -gt 0 ]; then exec "$out/sim" "$@"; fi
 failed=0
-for s in night zero clock overlap capacity; do
+for s in night zero clock overlap capacity corrupt; do
   "$out/sim" "$s" || failed=$((failed + 1))
 done
 exit "$failed"

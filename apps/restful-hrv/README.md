@@ -59,8 +59,11 @@ The history screen lists what has been measured, newest at the top:
   ──────────────────────
 ```
 
-The watch keeps the last 32 measurements — about a week and a half at three or
-four restful sleep episodes a night. A value that needed cleaning shows how many
+The watch keeps up to 128 measurements — about a month at three or four restful
+sleep episodes a night. When it is full it drops the oldest 32 at once, so it
+always holds at least 96. That is how long the watch can go without you opening
+the app, which is the only moment the measurements can reach the phone. A value
+that needed cleaning shows how many
 intervals were removed, e.g. `29 ms (-2)`. A Measure now is labelled `manual`.
 Times follow the watch's own 12/24-hour setting.
 
@@ -117,8 +120,8 @@ the diagnostics and the on/off setting with it. The giveaway is the switch
 reading `ON` again: that is the default when the key does not exist.
 
 This is why the app pushes everything to the phone whenever you open it, and why
-PebbleKit JS **merges** rather than replaces what it holds. The watch keeps the
-last 32 measurements and can lose them at any moment; the phone keeps up to 500
+PebbleKit JS **merges** rather than replaces what it holds. The watch keeps up to
+128 measurements and can lose them at any moment; the phone keeps up to 500
 and is what survives. An incoming batch is treated as new information about the
 past, never as the whole of it - replacing would discard everything older than
 whatever the watch happened to be holding at the time.
@@ -449,7 +452,7 @@ opened straight from disk for development.
 The settings page has a *Delete all measurements* button, behind a second tap.
 
 It has to go via the watch. The phone holds the durable copy, but the watch
-holds its own last 32, so clearing only the phone would achieve nothing - the
+holds its own copy, so clearing only the phone would achieve nothing - the
 next time you open the app on the watch it sends them straight back and the
 merge restores them. And the watch can only be told while the app is open on it,
 since a background worker has no AppMessage.
