@@ -2,71 +2,87 @@
 
 | | |
 |---|---|
-| Version reviewed | 1.8.0 (commit `0ec6abf`), fixes up to 1.8.1 (commit `b961a1a`) |
+| Version reviewed | 1.8.0 (commit `0ec6abf`) |
+| Fixed in | 1.8.1 (`b961a1a`) and 1.9.0 (`9abd4b9` … `7b7233a`) |
 | Date | 29 September 2026 |
 | Perspectives | Security and privacy · Stability and robustness · Measurement correctness · Battery and performance |
-| Scope | `worker_src/c/worker.c`, `src/c/main.c`, `src/common/hrv_common.h`, `src/pkjs/index.js`, `docs/restful-hrv/index.html`, `package.json`, `wscript`, `scripts/build-all.sh`, and what `README.md` and `appstore/listing.md` claim |
+| Scope | `worker_src/c/worker.c`, `src/c/main.c`, `src/common/hrv_common.h`, `src/pkjs/index.js`, `docs/restful-hrv/index.html`, `package.json`, `wscript`, `scripts/build-all.sh`, and what `README.md` and `appstore/listing.md` tell users |
 | Not in scope | `apps/one-off-alarm`; the Pebble firmware and the Pebble mobile app, which this app relies on but cannot inspect |
 | Checks | [`tests/`](tests/) — run them all with `tests/run.sh` |
 
 ## Summary
 
-No critical findings. One finding was **High** and has been fixed: the
-background worker wrote its diagnostics to flash every minute of the night, and
-every second during a measurement, about 900 writes a night. It now writes
-only when sleep starts or stops, plus a 15-minute heartbeat. A simulated night
-went from 917 writes to 58, with the same measurements (`b961a1a`).
+The review found no critical problems, one High finding and 17 lower ones:
+- 15 are fixed.
+- One is mitigated rather than fixed (SEC-6).
+- Two are accepted as they are (CORR-1, STAB-8).
 
-The remaining findings are **Medium** or lower and are listed as
-recommendations. Two of them should be dealt with before publishing, because
-they concern what users are told:
+Every fix is backed by a check that runs without a watch, or by review where
+none is possible, and the whole suite passes on 1.9.0. Three of the problems
+(STAB-1, STAB-3, STAB-4) were first reproduced in the simulator: the checks
+for them fail on the old code and pass on the new.
 
-- The store listing is out of date and says more about privacy than this
-  project can verify (SEC-1).
-- Every measurement also goes to Pebble's data logging, which nothing in this
-  project reads and whose handling on the phone cannot be checked (SEC-2).
+The most important changes:
 
-The parts that carry the most risk held up under test:
+- **Flash writes overnight (BATT-1, High):** the worker wrote its diagnostics
+  to flash every minute of the night, and every second during a measurement.
+  A simulated night went from 917 writes to 58.
+- **Data logging removed (SEC-2):** every measurement was also sent to
+  Pebble's data logging, which nothing reads. It is gone.
+- **A month of history (STAB-7):** the watch kept only 32 measurements, and
+  eight nights without opening the app lost the oldest. It now keeps 96–128,
+  about a month.
+- **A clock set back (STAB-4):** this held the sensor for 719 seconds. The
+  window is now bounded whatever the clock does.
+- **Honest failure messages (STAB-1, STAB-2):** the watch blamed the strap, or
+  said "switched off", when neither was the problem.
+- **Settings page hardening (SEC-3 to SEC-6):** a Content-Security-Policy,
+  refusal of unknown link formats, a clipboard warning, and an honest message
+  when delete is tapped outside the Pebble app.
+- **The store listing (SEC-1)** now says only what can be verified.
+
+What held up from the start:
 
 - **The settings page runs no code from a link.** Links are untrusted input:
-  anyone can craft one. Script placed in every field ran nowhere, broken input
-  crashed nothing, and nothing was fetched from anywhere.
-- **The RMSSD arithmetic agrees with an independent reference.** The worker's
-  integer version matched a floating-point reference in all 3,011 test cases.
-- **The sensor is always released.** Every path that ends a measurement gives
-  the heart rate sensor back.
-- **The nightly statistics on the page agree with a separate implementation
-  of their definitions.**
+  anyone can craft one.
+- **The RMSSD arithmetic** agrees exactly with an independent reference.
+- **The sensor is released** on every path out of a measurement.
+- **The nightly statistics** agree with a separate implementation of their
+  definitions.
 
-**Not verified here:** the review was done without a watch or a working
-emulator. Measure now (new in 1.8.0) and the flash fix (1.8.1) have been
-exercised in the simulator and the page in a browser. Neither has run on a Pebble
-Time 2 yet. They are marked *needs hardware check* below.
+**Not verified here:** no watch was available, and the emulator does not run
+in the review environment. Everything the watch does has been checked in a
+simulator that compiles the real worker code. Some things only a real Pebble
+Time 2 can confirm; they are listed under [Limitations](#limitations).
 
-## How data moves
+## How data moves (1.9.0)
 
 ```
  heart rate sensor
         │ HRV readings (health events)
         ▼
- background worker ──► DataLogging, tag HRV2 ──► Pebble mobile app (not read by this project)
-        │ persist: last 32 measurements + diagnostics
+ background worker
+        │ persist: up to 128 measurements (4 × 256-byte chunks) + diagnostics
         ▼
  watch app (only while open)
-        │ AppMessage: history + diagnostics
+        │ AppMessage: one message per 32-record chunk, diagnostics in the first
         ▼
- PebbleKit JS in the Pebble mobile app
+ PebbleKit JS, inside the Pebble mobile app
         │ localStorage: up to 500 measurements + diagnostics
         ▼
  settings page (static file on GitHub Pages)
         measurements travel in the URL fragment (#...), which the browser never
         sends to GitHub. GitHub sees that the page was opened, not what is in it.
+        A Content-Security-Policy stops the page loading or sending anything.
 ```
 
 What the page can send back is limited to one request: delete. It goes to
 PebbleKit JS by `pebblejs://close`, and only the `clear` field is acted on. The
 phone drops its copy only after the watch confirms that it has forgotten its
 own.
+
+Builds before 1.9 also sent every measurement to Pebble's data logging (tags
+`HRV1`, `HRV2`). 1.9.0 no longer does.
 
 ## Findings
 
@@ -79,190 +95,196 @@ Severity:
 - **Low:** hardening or clarity.
 - **Info:** checked and worth recording.
 
-Line numbers refer to commit `b961a1a`.
+| ID | Severity | Where | Finding | Status | Checked by |
+|---|---|---|---|---|---|
+| BATT-1 | High | `worker.c` `prv_evaluate_sleep_state()` | Diagnostics were written to flash on every evaluation while asleep. | **Fixed** `b961a1a` | `worker_sim` night |
+| SEC-1 | Medium | `appstore/listing.md` | The store listing was out of date and claimed more about privacy than can be verified. | **Fixed** `7b7233a` | Review of the text |
+| SEC-2 | Medium | `worker.c` | Every measurement was sent to data logging, which nothing reads. | **Fixed** `9abd4b9` (removed) | `worker_sim`: nothing logged |
+| STAB-1 | Medium | `worker.c` `prv_stop_measurement()` | "No intervals" was decided from an all-time counter. | **Fixed** `35802aa` | `worker_sim` zero |
+| STAB-2 | Medium | `main.c` Measure now | "Measuring is off" was shown whenever the worker was not running. | **Fixed** `e7977d0` | Needs hardware check |
+| STAB-3 | Low | `worker.c` `prv_evaluate_sleep_state()` | A Measure now used up the trigger of a restful episode beginning during it. | **Fixed** `35802aa` | `worker_sim` overlap |
+| STAB-4 | Low | `worker.c` `prv_tick_handler()`, `main.c` | A clock set back stretched the window and held the sensor. | **Fixed** `35802aa`, `e7977d0` | `worker_sim` clock |
+| STAB-5 | Low | `hrv_common.h`, `worker.c` | Diagnostic counters wrapped at 65,535. | **Fixed** `35802aa`, `c1ac8f3` | Review of the code |
+| STAB-6 | Low | `worker.c` `prv_append_history()` | On inconsistent storage the worker dropped the whole history. | **Fixed** `593ef33` | `worker_sim` corrupt |
+| STAB-7 | Low | design | 32 measurements on the watch; about eight nights without opening the app lost the oldest. | **Fixed** `593ef33` (96–128) | `worker_sim` capacity; sending needs hardware check |
+| SEC-3 | Low | `index.html` `render()` | Unknown link versions were read as the old format. | **Fixed** `c1ac8f3` | `decode.test.js`, `fuzz_page.js` |
+| SEC-4 | Low | `index.html` | No Content-Security-Policy. | **Fixed** `c1ac8f3` | `fuzz_page.js` (no violations) |
+| SEC-5 | Low | `index.html` export card | Copying put health data on the clipboard without saying so. | **Fixed** `c1ac8f3` | Review of the page |
+| SEC-6 | Low | `index.html` `inPebbleApp()` | Any Android WebView is treated as the Pebble app. | **Mitigated** `c1ac8f3` | Playwright: fallback message |
+| BATT-2 | Low | `worker.c` `prv_tick_handler()` | Measure now wrote the diagnostics every second. | **Fixed** `35802aa` (every 2 s) | `worker_sim` night |
+| DOC-1 | Low | `index.js` | A comment said the watch keeps 40 measurements. | **Fixed** `593ef33` | — |
+| CORR-1 | Info | `worker.c` `prv_compute_rmssd_ms()` | A perfectly flat series gives 0, which is treated as no result. | Accepted | `rmssd_test.py` |
+| STAB-8 | Info | `index.js` `mergeRecords()` | Records are merged by timestamp. | Accepted | — |
 
-| ID | Severity | Where | Finding | Status |
-|---|---|---|---|---|
-| BATT-1 | High | `worker.c` `prv_evaluate_sleep_state()` | Diagnostics were written to flash on every evaluation while asleep: every minute all night, every second during a measurement. | **Fixed** in `b961a1a`. Simulated; needs hardware check |
-| SEC-1 | Medium | `appstore/listing.md` | The store listing is out of date and its privacy statement is broader than can be verified. | Open — update before publishing |
-| SEC-2 | Medium | `worker.c:324`, `worker.c:471` | Every measurement is sent to data logging, which nothing here reads and whose handling on the phone is unknown. | Open |
-| STAB-1 | Medium | `worker.c:308` | "No intervals" is decided from an all-time counter, not from this measurement. | Open |
-| STAB-2 | Medium | `main.c:761`, `main.c:576` | Measure now says "Measuring is off" whenever the worker is not running, including when it is switched on. | Open |
-| STAB-3 | Low | `worker.c:368` | A Measure now running when restful sleep begins uses up that episode's trigger. | Open |
-| STAB-4 | Low | `worker.c:397`, `main.c:507` | The measurement window follows the wall clock; a clock set backwards stretches it. | Open |
-| STAB-5 | Low | `hrv_common.h:128` | The all-day HRV reading counter wraps after about a month. | Open |
-| STAB-6 | Low | `worker.c:197` | On inconsistent storage, the worker drops the whole on-watch history. The app keeps what it can read. | Open |
-| STAB-7 | Low | design | Measurements reach the phone only when the app is opened. About eight nights without opening it loses the oldest ones. | Open (documented in README) |
-| SEC-3 | Low | `index.html:720` | Any link version other than `2` is read as the old six-byte format. | Open |
-| SEC-4 | Low | `index.html` | No Content-Security-Policy. | Open |
-| SEC-5 | Low | `index.html:938` | The copy buttons put health data on the clipboard without saying so. | Open |
-| SEC-6 | Low | `index.html:238` | Any Android WebView is treated as the Pebble app. | Open |
-| BATT-2 | Low | `worker.c:392` | Measure now writes the diagnostics every second, 120 writes each time. | Accepted for now |
-| DOC-1 | Low | `index.js:70` | A comment says the watch keeps 40 measurements. It keeps 32. | Open |
-| CORR-1 | Info | `worker.c` `prv_compute_rmssd_ms()` | A perfectly flat series gives 0, which is treated as no result. | Accepted |
-| STAB-8 | Info | `index.js:86` | Records are merged by timestamp, so a record with the same second replaces the stored one. | Accepted |
-
-### BATT-1 — flash writes all night (High, fixed)
+### BATT-1 — flash writes all night (High, fixed in `b961a1a`)
 
 `prv_evaluate_sleep_state()` stored the "last seen asleep / restful" timestamps
 and wrote the diagnostics to flash whenever either bit was set. It runs on
 every tick: once a minute while idle and once a second during a measurement. It
 also runs on sleep and significant health events. The code already had a
-15-minute heartbeat for exactly this kind of field, and its own comment says
+15-minute heartbeat for exactly this kind of field, and its own comment said
 that a write every minute all night would be a real cost.
-
-**Evidence:** `tests/worker_sim` runs the real `worker.c` through a night: asleep
-23:10–06:50, four restful episodes. Before the fix it came to 917 diagnostic
-writes; after the fix, 58. The stored measurements were identical.
-
-The simulator in the repository has since gained two Measure now requests. With
-those it gives 1,071 writes before the fix and 212 after. Of those 212, 150 are
-Measure now's deliberate once-a-second writes (BATT-2).
 
 **Fix:** the timestamps are still updated in RAM on every evaluation, but the
 worker writes only when sleep or restful sleep starts or stops. The heartbeat
-keeps the stored copy at most 15 minutes behind in between. The morning
-reading of "last seen asleep" is exact, because it is written at the moment
-sleep ends.
+keeps the stored copy at most 15 minutes behind in between. "Last seen asleep"
+is exact in the morning, because it is written at the moment sleep ends.
 
-The simulator now fails if the night goes over its flash budget, so a return to
-writing on every tick is caught.
+**Evidence:** `tests/worker_sim` runs the real `worker.c` through a night:
+asleep 23:10–06:50, four restful episodes. Before the fix it came to 917
+diagnostic writes; after the fix, 58. The measurements were identical. The
+scenario has since gained two Measure now requests. In 1.9.0 it comes to 136
+diagnostic writes, of which about 75 are Measure now's progress writes
+(BATT-2). The scenario fails if the worker goes back to writing on every tick.
 
-**Needs hardware check:** that battery use over a night is unchanged or better.
+### SEC-1 — store listing (Medium, fixed in `7b7233a`)
 
-### SEC-1 — store listing out of date (Medium, open)
+**The problem:** the listing still described version 1.1:
+- a per-measurement table;
+- "last 32" in its description;
+- nothing about nights, Measure now or the diagnostics.
 
-`appstore/listing.md` still describes version 1.1:
-- It gives the version as 1.1.
-- Its release notes say the watch keeps "your last 40 measurements". It keeps
-  32.
-- It describes a per-measurement table and chart.
-- It says nothing about nights, medians, Measure now or the diagnostics.
+It also ended its privacy paragraph with "nothing is uploaded anywhere", while
+the data passes through the Pebble mobile app, whose handling this project
+cannot see.
 
-Its privacy sentence ends "so nothing is uploaded anywhere". That is true of
-this app's own code: the page makes no requests, and PebbleKit JS talks to no
-server. But the data also passes through the Pebble mobile app, by AppMessage,
-`localStorage` and data logging, and this project cannot see what that app
-does with it.
+**The fix:** the listing is rewritten for 1.9.0. Its privacy paragraph now says
+only what the code shows:
+- this app sends the measurements to no server;
+- GitHub sees only that the page was opened;
+- the measurements pass through the Pebble app;
+- anyone given the link can read them.
 
-**Recommendation:** update the listing to 1.8.x before publishing. Use the
-precise wording the settings page already uses: measurements are never sent
-to GitHub or to any server by this app; GitHub sees only that the page was
-opened; the link itself holds the measurements.
+The earlier release notes are kept verbatim as history.
 
-### SEC-2 — data logging nobody reads (Medium, open)
+### SEC-2 — data logging (Medium, fixed in `9abd4b9`)
 
-Every measurement is also logged with `data_logging_log()` under tag `HRV2`.
-PebbleKit JS cannot read data logging, and this project has no native
-companion app, so nothing reads it. It was added so a developer could pull the
-raw record themselves.
+Every measurement was also logged with `data_logging_log()` under `HRV2`.
+PebbleKit JS cannot read data logging, and there is no native companion app,
+so nothing read it. It was health data handed to a channel whose retention
+and forwarding are up to the Pebble mobile app.
 
-It is health data handed to a channel whose retention and forwarding is up to
-the Pebble mobile app. That goes against data minimisation, and it is
-invisible to users unless they read the README.
+**The fix:** it is removed from the worker. The README, the delete note on the
+settings page and the listing say that earlier builds logged there, and that
+this app can no longer reach or add to those records.
 
-**Recommendation:** remove it, make it opt-in, or at least say plainly in the
-listing that measurements are also passed to the Pebble app's data logging.
+### STAB-1 — "no intervals" (Medium, fixed in `35802aa`)
 
-### STAB-1 — "no intervals" from an all-time counter (Medium, open)
+**The problem:** a failed measurement was labelled "no intervals" (the watch
+did not think it was worn) when it collected nothing *and* an all-time counter
+of empty readings was above zero. After the first empty reading ever, a
+measurement that got no readings at all was blamed on the strap, both in the
+diagnostics and on Measure now's result screen.
 
-A failed measurement is labelled "no intervals" (the watch did not think it was
-worn) when it collected nothing *and* `hrv_zero_events > 0`. That counter is
-cumulative and never reset. So after the first empty reading ever, every
-measurement that collects nothing gets that label, even one where no readings
-arrived at all.
+**The fix:** the counter is noted when a measurement starts, and the result is
+compared with that. The `zero` scenario first runs a Measure now where every
+reading is empty (expect "no intervals"), then one where no readings arrive at
+all (expect "too few"). On the old code the second also said "no intervals".
 
-This shows up in the diagnostics. It also shows up in Measure now's result,
-which then tells the user to check the strap when the strap may not be the
-problem.
+### STAB-2 — "Measuring is off" (Medium, fixed in `e7977d0`)
 
-**Recommendation:** note the counter when a measurement starts, and compare
-with that.
-
-### STAB-2 — "Measuring is off" when it is not (Medium, open)
-
-The Measure now screen decides between its introduction and "Measuring is off"
-from `app_worker_is_running()`. The worker can be stopped while measuring is
-switched on:
+**The problem:** Measure now decided between its introduction and "Measuring
+is off" from `app_worker_is_running()` alone. The worker can be stopped while
+measuring is switched on:
 - just after it was switched on;
-- while the system's "replace background app?" prompt is open;
-- when another app's worker has taken the single background slot.
+- while the system asks whether to replace another app's worker;
+- after another app's worker has taken the single background slot.
 
-The screen then tells the user to switch on something that is already on.
+**The fix:** "Measuring is off" now depends on the setting. When measuring is
+on and the worker is not running, a new screen says exactly that.
 
-**Recommendation:** check the stored setting as well, and say "The background
-worker is not running" when it is on but stopped.
+**Needs hardware check:** this is app UI and cannot run in the simulator.
 
-### Lower-severity findings
+### STAB-3 to STAB-7
 
-- **STAB-3.** The worker notes restful sleep as seen even while a Measure now
-  is running. If restful sleep begins during one, that episode's start is used
-  up and it gets no measurement of its own. It is rare, but it could be avoided
-  by leaving `s_was_restful` untouched during a manual measurement.
-- **STAB-4.** The two-minute window is measured against `time()`. The watch
-  keeps UTC, so time zones and DST do not affect it, but a clock correction
-  from the phone during a measurement shortens or stretches it. Set backwards,
-  the sensor is held until the clock catches up, and Measure now's countdown
-  shows more than 2:00. Capping the window by a tick count as well would bound
-  it.
-- **STAB-5.** `hrv_events` counts every HRV reading all day, about 2,000 a day
-  in practice. As a `uint16_t` it wraps after about a month, and the figure in
-  the diagnostics is then misleading. The other counters take months to years
-  to wrap. The Measure now deltas are computed modulo 2¹⁶, so they survive a
-  wrap.
-- **STAB-6.** If the stored history is shorter than its count says,
-  `prv_append_history()` starts from empty and the on-watch history is lost.
-  The app, reading the same keys, keeps the records that are there, and the
-  worker should do the same. The phone keeps its own copy, so this does not
-  lose data the phone already has.
-- **STAB-7.** The watch holds 32 measurements and sends them only while the app
-  is open. The worker has no way to reach the phone. At three to four episodes a
-  night, about eight nights without opening the app pushes the oldest ones out
-  before the phone has them. The README says this. A reminder on the watch
-  would make it visible.
-- **SEC-3.** The page reads any version other than `v=2` as the old six-byte
-  format, so a future format would be shown as garbage instead of being
-  refused. It should refuse unknown versions.
-- **SEC-4.** The page has no Content-Security-Policy. Injection was not
-  possible in testing, since every value is inserted as text. A
-  `<meta http-equiv="Content-Security-Policy">` allowing only its own inline
-  script and style, and `data:` for the CSV, would make that hold even if a
-  future change slipped.
-- **SEC-5.** *Copy as CSV* and *Copy link for browser* put the measurements on
-  the clipboard, where some phones let other apps read them. The page explains
-  that the link stays in browser history, but not this.
-- **SEC-6.** `inPebbleApp()` treats any Android WebView as the Pebble app.
-  Opened inside another app's in-app browser, the page shows the delete button,
-  which does nothing there.
-- **BATT-2.** During Measure now the worker writes the diagnostics every second,
-  so the app can show progress: 120 writes per use. That is acceptable for
-  something a user starts by hand. Writing every two to three seconds would
-  still show progress.
-- **DOC-1.** A comment in `src/pkjs/index.js` says the watch keeps its last 40.
-  It keeps 32.
-- **CORR-1.** A series of identical intervals has an RMSSD of 0, which the
-  worker treats as "no result". It cannot happen with a real heart.
-- **STAB-8.** The phone merges incoming records by timestamp, so two
-  measurements can only collide if they end in the same second, which the
-  worker cannot produce. A watch whose clock was reset could produce it.
+- **STAB-3 (fixed):** the worker no longer updates its "was restful" state
+  during a Measure now. A restful episode that begins while one is running
+  gets its own measurement afterwards. The `overlap` scenario checks it: two
+  measurements, one manual. The old code gave one.
+- **STAB-4 (fixed):**
+  - *The problem:* the window was timed only by `time()`. A clock correction
+    from the phone that set it back ten minutes held the sensor for 719
+    seconds in the `clock` scenario.
+  - *The fix:* the window is also capped at 125 second ticks, and a clock that
+    has gone backwards counts as elapsed. The sensor is now released at once,
+    and a partial measurement is kept if it has enough intervals.
+  - *On the app side,* the countdown is clamped to 0–2:00.
+- **STAB-5 (fixed):** diagnostic counters saturate at 65,535 instead of
+  wrapping, through a helper that takes and returns the value; a pointer into
+  the packed struct could be unaligned. The settings page shows such a counter
+  as "65,535+".
+- **STAB-6 (fixed):** when the count and the stored records disagree, the
+  worker keeps the records it can read, as the app always did. The old code
+  started again from nothing, which is clear from reading it. In the `corrupt`
+  scenario, 40 records with a chunk cut to 3, the new code keeps the 35 that
+  can be read and adds the next.
+- **STAB-7 (fixed):** the history is four persist chunks of 32 records. Chunk
+  0 is the old single key, so existing histories are read unchanged.
+  - An ordinary append rewrites one chunk and the count.
+  - When the history is full, the oldest whole chunk is dropped at once, so
+    the rewrite of every chunk happens only once every 32 measurements.
+  - The app sends one chunk per message, chaining on each acknowledgement.
+    pkjs already merged message by message, so the protocol did not change.
+  - The `capacity` scenario runs 140 Measure nows: it expects 108 kept, oldest
+    first, and at most two writes per ordinary append.
+  - *Needs hardware check:* the chained sending. Code review found and fixed
+    one problem in it before release: a second send trigger could have ended a
+    transfer under way.
+
+### Settings page (SEC-3 to SEC-6)
+
+- **SEC-3 (fixed):** only `v=1` (six-byte records) and `v=2` (eight-byte) are
+  read. Git history shows every phone-side build sent one of the two. Anything
+  else shows "Newer data than this page understands" instead of nonsense.
+- **SEC-4 (fixed):** a Content-Security-Policy allows only the page's own
+  inline script and style, plus `data:` for the CSV:
+  `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'`.
+  - The fuzz test fails on any violation, so the policy cannot silently break
+    the page.
+  - An image from another site, injected on purpose, was reported, so the
+    test would catch a real violation.
+  - The CSV download still works under the policy.
+- **SEC-5 (fixed):** the export card says that copying puts the measurements
+  on the clipboard, where other apps may be able to read them.
+- **SEC-6 (mitigated):** telling the Pebble app's web view apart from other
+  Android web views depends on a bridge object whose presence could not be
+  confirmed on every phone. Narrowing the detection could therefore have
+  broken delete in the real app, so it was left alone. Instead, if the page is
+  still open two seconds after a delete, it says "Not deleted" and explains
+  that deleting only works inside the Pebble app. Before, it sat on
+  "Deleting…".
+
+### BATT-2, DOC-1, and what is accepted
+
+- **BATT-2 (fixed):** during Measure now the worker writes its diagnostics
+  every 2 s instead of every second: 60 writes for a full Measure now instead
+  of 120. The app still polls every second, so the countdown stays smooth.
+- **DOC-1 (fixed):** the comment in `src/pkjs/index.js` gives the real
+  capacity.
+- **CORR-1 (accepted):** a series of identical intervals has an RMSSD of 0,
+  which the worker treats as "no result". It cannot happen with a real heart,
+  and treating it as a failure is the safe reading.
+- **STAB-8 (accepted):** the phone merges incoming records by timestamp, so
+  two records can only collide if they ended in the same second. The worker
+  cannot produce that; only a watch whose clock was reset could.
 
 ## What was checked, by perspective
 
 ### Security and privacy
 
-- **The settings page against hostile links** (`tests/fuzz_page.js`). Sixteen
-  kinds of link, each opened as in the Pebble app and in a plain browser: 32
-  runs. The cases:
+- **The settings page against hostile links** (`tests/fuzz_page.js`).
+  Seventeen kinds of link, each opened as in the Pebble app and in a plain
+  browser: 34 runs. The cases:
   - script in every field of the status JSON;
   - script in the timestamp and in the data;
   - JSON that does not parse, a broken escape, arrays and numbers instead of
     objects;
-  - unknown versions and random bytes;
+  - unknown and missing versions, and random bytes;
   - timestamps at 0 and 2³²−1;
   - a 200 kB payload.
 
-  In all 32, nothing ran, no dialog opened, no image was created, no request
-  left the page, and the page rendered.
+  In all 34, nothing ran, no dialog opened, no image was created, no request
+  left the page, there was no CSP violation, and the page rendered.
 - **Where data can enter the page.** `innerHTML` is only ever used to clear an
   element. There is no `eval`, no `new Function`, and no `document.write`.
   The only link the page builds is the CSV `data:` URI, from numbers.
@@ -271,49 +293,56 @@ worker is not running" when it is on but stopped.
     every access wrapped.
   - It decodes watch bytes with bounds checks.
   - It honours only `clear` from the page.
-  - Its only network action is `Pebble.openURL` to the page. It sends nothing
-    anywhere itself.
+  - Its only network action is `Pebble.openURL` to the page.
 - **Deleting is two-phase.** The phone keeps its copy until the watch confirms.
-  History arriving while a delete is pending is ignored, so a half-finished
-  delete leaves data on both sides rather than on neither.
+  History arriving while a delete is pending is ignored. The watch now deletes
+  all four history chunks.
 - **Least privilege.** `package.json` asks for `health` and `configurable`
   only. There is no location, and no network from the watch.
-- **Claims.** Every privacy statement on the page and in the README matches
-  the code. The store listing does not (SEC-1).
+- **Claims.** The page, the READMEs and the store listing were each checked
+  against the code.
 
 ### Stability and robustness
 
-- **The whole night through the real worker** (`tests/worker_sim`). It covers
-  four restful episodes, one of them ending inside the window, one Measure now
-  left to finish and one cancelled after 30 seconds:
-  - five measurements are stored, one flagged manual; the cancelled one
-    stores nothing;
-  - every stored measurement also goes to data logging;
-  - the sensor is held for exactly 4 × 120 + 60 + 30 seconds and released
-    afterwards.
-- **The sensor is released on every exit path.** By reading the code: the end
-  of the window, the end of the episode, switching off, cancel, and
-  `prv_deinit()` when the worker is stopped. `prv_init()` also releases it, in
-  case a previous run was killed without deinitialising.
-- **Worker memory.** 4,372 of 10,240 bytes, from the build report. The only
-  large buffer is static rather than on the stack. The worker binary contains
-  no floating-point routines, only the 64-bit integer division helper, checked
-  with `arm-none-eabi-nm`.
-- **Persistent storage.**
-  - Every write is at most 256 bytes: the history is exactly 256, the
-    diagnostics 36. The simulator fails any write over 256.
-  - Reads check their length, and a diagnostics struct of the wrong size is
-    reset rather than misread.
-  - The old six-byte history keys are deleted by both the app and the worker.
+- **The real worker in six simulated scenarios** (`tests/worker_sim`):
+  - *night:* four restful episodes, one ending inside the window, plus one
+    Measure now left to finish and one cancelled. Five measurements are stored,
+    one flagged manual; the cancelled one stores nothing; the sensor is held
+    for exactly 4 × 120 + 60 + 30 seconds; nothing goes to data logging; the
+    flash budget holds.
+  - *zero:* empty readings give "no intervals"; no readings at all give "too
+    few" (STAB-1).
+  - *clock:* with the clock set back ten minutes, the sensor is released within
+    the window (STAB-4).
+  - *overlap:* restful sleep beginning during a Measure now still gets its own
+    measurement (STAB-3).
+  - *capacity:* 140 Measure nows keep 108, oldest first, with two writes per
+    ordinary append (STAB-7).
+  - *corrupt:* a history shorter than its count keeps what is readable
+    (STAB-6).
+
+  In every scenario, every persistent write is checked to be at most 256
+  bytes, and the sensor must be released at the end.
+- **The sensor is released on every exit path.** In the simulator: the end of
+  the window, the end of an episode, cancel, and the clock going back. By
+  reading the code: switching off and `prv_deinit()`. `prv_init()` also
+  releases it in case a previous run was killed.
+- **Worker memory.** 5,292 of 10,240 bytes, from the build report. That
+  includes the 1 KB history buffer, which is static rather than on the stack.
+  The worker binary contains no floating-point routines, only the 64-bit
+  integer division helper, checked with `arm-none-eabi-nm` on 1.9.0.
 - **The watch app.**
   - Every timer is cancelled when its window unloads.
-  - Measure now checks that its layer exists before redrawing.
-  - The phone message fits its outbox: 307 of 388 bytes at most.
-  - The one-retry rule stops a failed send from looping.
+  - The phone message still fits its outbox: 307 of 388 bytes, now per chunk.
+  - A failed send ends the transfer and gets one retry, which starts again
+    from the first chunk.
 - **Time.**
   - Nights on the page run noon to noon in local time, including across both
-    DST changes, month ends and year ends (`tests/page_stats.test.js`).
-  - The worker's window follows UTC (see STAB-4 for clock corrections).
+    DST changes, month ends and year ends.
+  - The worker's window follows UTC and is capped in ticks (STAB-4).
+- **Build.** A clean `pebble build` of 1.9.0 gives no warnings other than the
+  SDK linker's standard note about RWX segments, which the unchanged code
+  also gets.
 
 ### Measurement correctness
 
@@ -336,14 +365,15 @@ worker is not running" when it is on but stopped.
   README's definitions, on synthetic histories of 1 to 40 nights. That covers
   nights, medians, the 7- and 30-night windows, the baseline that leaves the
   latest night out, standard deviation and CV with n−1, the minimum-night
-  rules, the two middle measurements behind an even median, and Measure now
-  readings never reaching a night.
+  rules, the middle measurements behind a median, and Measure now readings
+  never reaching a night.
 - **Link decoding** (`tests/decode.test.js`):
   - the manual flag and the artefact count stay separate;
   - timestamps after 2038 stay positive;
   - old six-byte records have no count;
   - a trailing partial record is ignored;
-  - junk characters in the base64 are skipped;
+  - junk characters are skipped;
+  - only versions 1 and 2 are read;
   - the CSV has one row per measurement.
 
 ### Battery and performance
@@ -354,31 +384,55 @@ worker is not running" when it is on but stopped.
   the worker asks for no sample period at all.
 - **Wake-ups.** The worker ticks once a minute when idle and once a second only
   inside a measurement. The system's HRV broadcast, about 2,000 a day, wakes it
-  briefly to increment a counter.
+  briefly to count.
 - **Flash.**
-  - After BATT-1, a night takes about 60 writes: diagnostics at sleep changes,
-    at the start and end of measurements, and every 15 minutes, plus the
-    history.
-  - Measure now adds 120 (BATT-2).
-  - Flash reads are cheap by comparison: the on/off setting is read once a
-    second during a measurement.
-- **Phone.** The app sends one message of at most 307 bytes each time it is
-  opened. The settings link is at most about 6 kB.
+  - About 60 writes a night: diagnostics at sleep changes, at the start and end
+    of measurements, and every 15 minutes, plus two per stored measurement.
+  - A Measure now adds about 60.
+  - Once every 32 measurements the history shift rewrites four chunks.
+- **Phone.** Opening the app sends up to four messages of at most 307 bytes.
+  The settings link is at most about 6 kB.
+
+## Re-check after fixes
+
+`tests/run.sh` on 1.9.0 (`7b7233a`):
+
+```
+==> RMSSD in the worker vs the reference
+3011 cases, 0 mismatches
+==> The real worker through six simulated scenarios
+scenario: night     5 stored (1 manual), sensor 570 s, released; all checks passed
+scenario: zero      strap off -> no intervals, no readings -> too few; all checks passed
+scenario: clock     sensor released 30 s after the start; all checks passed
+scenario: overlap   2 stored (1 manual); all checks passed
+scenario: capacity  kept 108 of 140, at most 2 writes per append; all checks passed
+scenario: corrupt   count said 40, chunk cut to 3 -> 36 kept; all checks passed
+==> Settings page statistics vs the reference
+13 tests passed
+==> Settings page decoding and CSV
+decode tests passed
+==> Settings page against hostile links
+34 runs, no failures
+All checks passed.
+```
 
 ## Limitations
 
-- **No hardware.** No watch was available and the emulator does not run in the
-  review environment. Two things therefore need a hardware check before
-  release:
-  - Measure now as a whole: the countdown, the result, cancel, and the "off"
-    and "busy" screens;
-  - that the flash fix makes no difference to how the worker behaves over a
-    real night.
-- **The simulator is a model.** It stands in for the SDK, and its night is
+- **No hardware.** No watch was available, and the emulator does not run in
+  the review environment. These need a real Pebble Time 2 before release:
+  - Measure now in all its states: countdown, result, cancel, off, not
+    running, busy;
+  - sending a full history as four chained messages, and the phone receiving
+    all of them;
+  - an existing 1.8 history being read after upgrading to 1.9;
+  - deleting, which must clear all four chunks;
+  - battery over a real night.
+- **The simulator is a model.** It stands in for the SDK, and its nights are
   invented. Real health events arrive on the firmware's own schedule, so the
   exact counts will differ.
-- **The Pebble mobile app is outside this review.** Its handling of AppMessage,
-  `localStorage` and data logging could not be checked (SEC-1, SEC-2).
+- **The Pebble mobile app is outside this review.** Its handling of AppMessage
+  and `localStorage` could not be checked. Nor could what it does with data
+  logging records from builds before 1.9.
 
 ## Rerunning the checks
 
