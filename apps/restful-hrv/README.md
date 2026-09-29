@@ -12,6 +12,11 @@ is only useful when it can be compared against the ones before it.
 The app itself is a switch and a list. All the measuring happens in a background
 worker that keeps running with the app closed.
 
+The code has been reviewed for security and privacy, stability, measurement
+correctness and battery use before publishing. The findings, what was fixed and
+what is still open are in [REVIEW.md](REVIEW.md), and the checks behind it are in
+[`tests/`](tests/).
+
 ## Using it
 
 ```
@@ -493,6 +498,12 @@ seconds per episode; the rest of the time the app releases its HRV sample
 period entirely and the system goes back to its own schedule. While measuring is
 switched off, the worker isn't running at all.
 
+Flash writes are kept to what the diagnostics need. They are written when sleep
+starts or stops, when a measurement starts or ends, and every 15 minutes in
+between - about 60 writes on a simulated night (see
+[REVIEW.md](REVIEW.md), BATT-1). Measure now writes every second while it runs,
+so the watch can show its progress.
+
 ## How it works
 
 Three pieces:
@@ -551,6 +562,12 @@ To check a build, list the bundle - `pebble-js-app.js` has to be in it:
 
 ```sh
 unzip -l build/restful-hrv.pbw
+```
+
+The checks behind [REVIEW.md](REVIEW.md) run without a watch:
+
+```sh
+tests/run.sh
 ```
 
 Note what the emulator cannot reproduce:
