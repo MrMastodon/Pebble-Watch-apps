@@ -76,6 +76,10 @@ static bool s_manual;
 // finishing a measurement mid-episode does not immediately start another.
 static bool s_was_restful;
 
+// Last seen state of the plain sleep bit, only so that its changes can be told
+// apart from it merely still being set.
+static bool s_was_asleep;
+
 static bool prv_hrv_enabled(void) {
   if (!persist_exists(PERSIST_KEY_HRV_ENABLED)) {
     return true;
@@ -334,19 +338,24 @@ static void prv_evaluate_sleep_state(void) {
   // Plain sleep is tracked purely as evidence. It is not what triggers a
   // measurement, but "asleep all night, never restful" and "never asleep at
   // all" are different problems and otherwise indistinguishable.
+  //
+  // The timestamps are updated in RAM on every call, but only written to flash
+  // when sleep or restful sleep starts or stops. Writing whenever either bit was
+  // merely set meant a flash write every minute all night, and every second
+  // during a measurement - over 900 a night. In between, the heartbeat in the
+  // tick handler keeps the stored copy at most HRV_DIAG_HEARTBEAT_SEC behind.
   uint32_t now = (uint32_t)time(NULL);
-  bool changed = false;
-  if (activities & HealthActivitySleep) {
+  bool asleep = (activities & HealthActivitySleep) != 0;
+  if (asleep) {
     s_diag.sleep_last_seen_at = now;
-    changed = true;
   }
   if (is_restful) {
     s_diag.restful_last_seen_at = now;
-    changed = true;
   }
-  if (changed) {
+  if (asleep != s_was_asleep || is_restful != s_was_restful) {
     prv_diag_flush();
   }
+  s_was_asleep = asleep;
 
   if (s_measuring) {
     // A manual measurement is deliberately not tied to the sleep state, or it

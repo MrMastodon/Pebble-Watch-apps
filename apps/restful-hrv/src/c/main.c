@@ -12,7 +12,7 @@
 // status screen of the worker's own counters sits behind a long press of UP;
 // it is for tracking down a night that measured nothing, not for everyday use.
 
-#define APP_VERSION "1.8.0"
+#define APP_VERSION "1.8.1"
 
 // How long after toggling to re-check whether the worker actually started or
 // stopped. Both operations are asynchronous, and launching one can put a
