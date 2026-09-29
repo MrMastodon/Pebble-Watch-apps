@@ -5,13 +5,14 @@ screen on the phone. GitHub Pages serves this directory as the site root, so
 `restful-hrv/index.html` is published at
 `https://mrmastodon.github.io/Pebble-Watch-apps/restful-hrv/`.
 
-These are plain HTML with no backend and no build step. `.nojekyll` turns off
+These are plain HTML with no backend and no build step. The data a page shows
+travels in the URL fragment, which browsers never send to the server. `.nojekyll` turns off
 Jekyll processing, since there is nothing here for it to do and it would only
 add ways for the build to fail.
 
 | Page | Used by |
 |---|---|
-| [`restful-hrv/`](restful-hrv) | [`apps/restful-hrv`](../apps/restful-hrv) — shows the measurement history with a chart and CSV export |
+| [`restful-hrv/`](restful-hrv) | [`apps/restful-hrv`](../apps/restful-hrv) — sums the measurements up night by night, with a chart, a list per night and CSV export |
 
 Pages is configured under **Settings → Pages → Source: `main` branch, `/docs`
 folder**. Note that it builds from `main`, so a page only goes live once its

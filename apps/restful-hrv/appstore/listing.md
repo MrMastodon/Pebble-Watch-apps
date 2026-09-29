@@ -11,7 +11,7 @@ Restful HRV
 ## Version
 
 ```
-1.1
+1.9.0
 ```
 
 ## Category
@@ -35,30 +35,65 @@ takes a two-minute reading and works out your RMSSD in milliseconds - the
 standard short-window HRV metric.
 
 Every measurement is taken exactly the same way: the same two-minute window,
-the same one-second sampling, always at the start of a deep-sleep episode.
+the same one-second sampling, always at the start of a restful sleep episode.
 That is the whole point - an HRV number is only worth anything if you can
-compare it against the ones from previous nights.
+compare it against the ones from previous nights. Beats the sensor misread
+are filtered out, and a reading without enough clean beats is dropped rather
+than logged, so a bad night shows up as a gap instead of a wrong number.
 
-Several restful sleep episodes in a night give you several readings, not one
-average. Readings the sensor couldn't get a clean look at are thrown away
-rather than logged, so a bad night shows up as a gap instead of a wrong
-number.
+On the watch:
+- SELECT turns measuring on and off.
+- DOWN shows your measurements, newest first. The watch keeps about a month
+  of them.
+- UP is Measure now: a two-minute reading on demand, with a countdown ring.
+  Readings taken this way are marked as manual and kept out of the nightly
+  figures, since you are awake.
 
-The watch keeps your last 32 measurements and shows them in the app, newest
-first. Open the app's settings on your phone and you get the same numbers as
-a table and a chart, with a button to copy or download them as CSV. That page
-is a static file with no backend - the measurements travel to it in the URL
-fragment, which browsers never send to a server, so nothing is uploaded
-anywhere.
+On the phone, open the app's settings. Your measurements are summed up night
+by night - each night is the median of its readings - with your latest night
+against the nights before it, 7- and 30-night averages, a normal range, how
+steady your nights are, and a chart. Tap a night to see its readings. Copy or
+download everything as CSV. The figures only ever compare you with yourself;
+this is not a medical assessment.
 
-Every measurement is also written to Pebble's data logging, tagged HRV2, for
-anyone who wants to pull the full record off the watch themselves.
+Privacy: this app sends your measurements to no server. The settings page is
+a static file hosted on GitHub; your measurements travel to it inside the
+link itself, in the part after the #, which browsers never send to any server.
+GitHub sees only that the page was opened. On your phone the measurements
+pass through the Pebble app, which holds the app's cache and shows the page.
+Anyone you give the link to can see the measurements in it.
 
-Requires a Pebble Time 2 - HRV peak-to-peak intervals need firmware 4.32 or
-newer and a heart rate sensor that reports them.
+The code has been reviewed for security, privacy, stability, measurement
+correctness and battery use; the report is published with the source.
+
+Requires a Pebble Time 2 with sleep tracking on - HRV beat-to-beat intervals
+need firmware 4.32 or newer and a heart rate sensor that reports them.
 ```
 
-## Release notes (v1.1)
+## Release notes (v1.9.0)
+
+```
+- Nights, not single readings: the phone shows each night as the median of
+  its readings, compared with your own recent nights - 7- and 30-night
+  averages, a normal range, and how steady your nights are - with a chart
+  and one row per night that opens to show its readings.
+- Measure now (UP): a two-minute reading on demand with a countdown.
+  Kept separate from the nightly figures.
+- The watch keeps about a month of measurements (up to 128, was 32), so
+  going a while without opening the app no longer loses the oldest ones.
+- Beats the sensor misread are filtered out before RMSSD is computed.
+- Measurements are no longer sent to Pebble's data logging, which nothing
+  read.
+- Far fewer flash writes overnight, and several robustness fixes from a
+  code review. The report is published with the source.
+- New icon that shows in the app list, not only when selected.
+```
+
+## Earlier release notes
+
+Kept as they were published; details have changed since (see v1.9.0).
+
+### v1.1
 
 ```
 - The watch now keeps your last 40 measurements and lists them in the app,
@@ -72,7 +107,7 @@ newer and a heart rate sensor that reports them.
   around that; the settings page says how recently it was refreshed.
 ```
 
-## Release notes (v1.0)
+### v1.0
 
 ```
 Initial release.
@@ -123,10 +158,10 @@ cd apps/restful-hrv
 pebble login
 pebble publish \
   --name "Restful HRV" \
-  --version 1.1 \
+  --version 1.9.0 \
   --description "Measures your HRV automatically every time you drop into restful sleep." \
   --category "health and fitness" \
-  --release-notes "History on the watch, plus a settings page on the phone with chart and CSV export." \
+  --release-notes "Nightly summaries against your own recent nights, Measure now, a month of history on the watch, and fixes from a code review." \
   --icon-small appstore/icon-small.png \
   --icon-large appstore/icon-large.png
 ```

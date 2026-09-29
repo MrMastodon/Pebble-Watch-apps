@@ -9,13 +9,15 @@ The measurement is deliberately identical every time — same duration, same
 sampling rate, always taken at the start of an episode — because an HRV reading
 is only useful when it can be compared against the ones before it.
 
-The app itself is a switch and a list. All the measuring happens in a background
-worker that keeps running with the app closed.
+The app itself is a switch, a history list and a *Measure now* button for a
+two-minute reading on demand. All the measuring happens in a background worker
+that keeps running with the app closed. On the phone, the app's settings page
+sums the measurements up night by night.
 
-The code has been reviewed for security and privacy, stability, measurement
-correctness and battery use before publishing. The findings, what was fixed and
-what is still open are in [REVIEW.md](REVIEW.md), and the checks behind it are in
-[`tests/`](tests/).
+The code was reviewed before publishing for security and privacy, stability,
+measurement correctness and battery use. The findings, and what was done about
+each, are in [REVIEW.md](REVIEW.md). The checks behind it are in
+[`tests/`](tests/) and run without a watch.
 
 ## Using it
 
@@ -31,7 +33,7 @@ what is still open are in [REVIEW.md](REVIEW.md), and the checks behind it are i
      UP measure now
       DOWN history
 
-          v1.8.0
+          v1.9.0
 ```
 
 - **SELECT** — turn measuring on or off. The setting is remembered across
@@ -63,9 +65,9 @@ The watch keeps up to 128 measurements — about a month at three or four restfu
 sleep episodes a night. When it is full it drops the oldest 32 at once, so it
 always holds at least 96. That is how long the watch can go without you opening
 the app, which is the only moment the measurements can reach the phone. A value
-that needed cleaning shows how many
-intervals were removed, e.g. `29 ms (-2)`. A Measure now is labelled `manual`.
-Times follow the watch's own 12/24-hour setting.
+that needed cleaning shows how many intervals were removed, e.g. `29 ms (-2)`. A
+Measure now is labelled `manual`. Times follow the watch's own 12/24-hour
+setting.
 
 ### Measure now
 
@@ -149,13 +151,21 @@ Measure now):
    Sleep events: 6
 
    SENSOR
-   HRV readings: 0
+   All day: 2053
+   While measuring: 0
+   Of those, empty: 0
    Period granted: not requested
 
    MEASUREMENTS
    Episodes: 0
    Last result: none yet
+   Last at: never
+   Readings used: 0
+   Artefacts removed: 0
 ```
+
+The same counters are on the phone, in the folded *Diagnostics* section of the
+settings page.
 
 Each line separates one failure from another:
 
@@ -167,7 +177,8 @@ Each line separates one failure from another:
 | `Episodes` above zero, `While measuring: 0` | Measurements ran but no HRV reading arrived inside any of their windows. |
 | `While measuring` high, `Of those, empty` about the same | Readings arrived and every one came back without an interval. |
 | `Last result: too few readings` | The sensor delivered some intervals, but fewer than the ten needed. |
-| `Last result: no intervals`, `Empty` counting up | The sensor was running and every reading came back without a heartbeat interval. See below. |
+| `Last result: no intervals` | Readings arrived during that measurement and every one came back without a heartbeat interval. See below. |
+| `Last result: cancelled` | The last measurement was a Measure now that you cancelled. |
 | `Last result: died computing` | The worker did not survive turning the readings into a number. It should never say this; if it does, that is a bug worth reporting. |
 
 ### "HRV readings" all day is not the same as readings you can use
@@ -293,8 +304,9 @@ exactly the shape of bug that survives every test you run and then fails only on
 real hardware, silently, in the middle of the night.
 
 The arithmetic never needed a fraction: the inputs are whole milliseconds and so
-is the answer. The integer version agrees exactly with the floating-point one
-across several hundred generated cases, including the range extremes.
+is the answer. The integer version agrees exactly with a floating-point
+reference on 3,011 cases, including the range extremes
+([`tests/rmssd_test.py`](tests/rmssd_test.py)).
 
 For the same reason, the measurement's outcome is written to storage *before*
 the result is computed rather than after. If the worker dies doing the
@@ -310,9 +322,10 @@ slow to find anything out, so this is the quick way to see whether the sensor
 delivers heartbeat intervals at all. Afterwards, `While measuring` and
 `Of those, empty` on the hidden status screen show what arrived.
 
-The counters are cumulative and survive reboots. They are reset by removing the
-app - see above - and they are mirrored to the phone's settings page, which is
-where to look if the watch's copy has been wiped.
+The counters are cumulative and survive reboots, and stop at 65,535 rather
+than wrapping round. They are reset by removing the app - see above - and they
+are mirrored to the phone's settings page, which is where to look if the
+watch's copy has been wiped.
 
 ## What it measures
 
@@ -402,6 +415,8 @@ of a download button. The link carries the measurements in its fragment, so
 pasted into the browser's address bar it opens the same page, where *Download
 CSV* works. The bare address without the fragment is an empty page, since there
 is nothing on the server to load. Deleting only works from inside the app.
+Copying puts the measurements on the phone's clipboard, where other apps may be
+able to read them, and the page says so.
 
 The link is long, because the measurements are inside it: a little under 1,000
 characters for a week, and up to about 6,000 with the 500 measurements the
@@ -415,7 +430,8 @@ file hosted on GitHub Pages, with no backend. The measurements travel to it in
 the URL fragment, the part after the `#`, which browsers never send to any
 server. GitHub sees that the page was opened (IP address, time, browser), as any
 website would, but not the measurements. The page loads nothing else and makes
-no network requests of its own. The flip side is that the link itself holds the
+no network requests of its own, and a Content-Security-Policy stops it from
+loading or sending anything even by mistake. The flip side is that the link itself holds the
 measurements, so anyone it is shared with can see them. The page's source is in
 [`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
 
@@ -491,7 +507,8 @@ switched off, the worker isn't running at all.
 Flash writes are kept to what the diagnostics need. They are written when sleep
 starts or stops, when a measurement starts or ends, and every 15 minutes in
 between - about 60 writes on a simulated night (see
-[REVIEW.md](REVIEW.md), BATT-1). Measure now writes every second while it runs,
+[REVIEW.md](REVIEW.md), BATT-1). A history append writes one 256-byte chunk and
+the count. Measure now writes the diagnostics every two seconds while it runs,
 so the watch can show its progress.
 
 ## How it works
@@ -506,12 +523,12 @@ Three pieces:
   it requests an HRV sample period, collects
   `health_service_peek_hrv_ppi_ms()` readings for 120 seconds, computes RMSSD,
   writes it to the on-watch history, and releases the sample period.
-- `src/c/main.c` — the switch and the history list. Writes the setting to
-  persistent storage, launches or kills the worker to match, and hands the
-  history to PebbleKit JS.
+- `src/c/main.c` — the switch, Measure now and the history list. Writes the
+  setting to persistent storage, launches or kills the worker to match, and
+  hands the history to PebbleKit JS, one 32-record chunk per message.
 - `src/pkjs/index.js` + `docs/restful-hrv/index.html` — the phone side. The JS
-  caches whatever the watch sends and passes it to the settings page in the URL
-  fragment.
+  merges whatever the watch sends into its cache of up to 500 measurements and
+  passes it to the settings page in the URL fragment.
 
 `src/c/main.c` and `worker_src/c/worker.c` share `src/common/hrv_common.h` so
 the persistent-storage keys and the record layout can't drift between them — if
