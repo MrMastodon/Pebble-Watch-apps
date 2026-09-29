@@ -31,14 +31,9 @@
 // completely silent about why.
 #define PERSIST_KEY_DIAG 4
 
-// DataLogging tag for the measurement log, ASCII "HRV2". Each record is three
-// 4-byte unsigned ints: the UTC timestamp the measurement ended, RMSSD in whole
-// milliseconds, and how many intervals were rejected as artefacts.
-//
-// "HRV1" held two items and RMSSD computed without artefact filtering. A new
-// tag rather than the old one with an extra item, so nothing reading the log
-// can mistake one computation for the other.
-#define HRV_LOG_TAG 0x48525632
+// Builds before 1.9 also logged every measurement to DataLogging, under the
+// tags "HRV1" and "HRV2". Nothing in this project ever read that log, so it was
+// removed rather than keep handing health data to a channel no one uses.
 
 // How long one measurement runs, and how often the sensor is asked for a new
 // peak-to-peak interval. Both are deliberately fixed rather than adaptive: a
@@ -82,7 +77,6 @@ typedef struct __attribute__((__packed__)) {
 // are at most HRV_PPI_CAPACITY intervals to reject - so it costs no space and
 // keeps the record, and the link format built from it, exactly as it was. The
 // settings page uses it to keep daytime spot checks out of the nightly figures.
-// DataLogging carries the same flag as bit 16 of its third value.
 #define HRV_REJECTED_MANUAL_FLAG 0x8000
 #define HRV_REJECTED_COUNT_MASK 0x7FFF
 

@@ -1021,8 +1021,8 @@
     var note = el('p', 'note',
       'Clears the ' + count + ' measurement' + (count === 1 ? '' : 's') +
       ' held here and on the watch. The diagnostics counters are kept. ' +
-      'Records already passed to Pebble\u2019s data logging are not affected - ' +
-      'nothing on this page can reach those.');
+      'Versions before 1.9 also passed each measurement to Pebble\u2019s data ' +
+      'logging; nothing on this page can reach those copies.');
 
     var armed = false;
     btn.addEventListener('click', function () {

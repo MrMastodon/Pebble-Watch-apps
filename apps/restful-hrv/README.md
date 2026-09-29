@@ -1,7 +1,7 @@
 # Restful HRV
 
 A watchapp for the Pebble Time 2 that measures heart rate variability (HRV)
-automatically while you sleep, and logs each result to your phone. It takes one
+automatically while you sleep, and hands each result to your phone. It takes one
 measurement every time the watch enters restful sleep, so you end up with a
 number per deep-sleep episode rather than one per night.
 
@@ -86,7 +86,7 @@ sample rate, as a night measurement:
 
 A Measure now is taken awake, which is a different state from restful sleep, so
 it is kept apart. It is stored with a flag (see
-[Getting the raw data](#getting-the-raw-data)), labelled `manual` on the watch,
+[The record format](#the-record-format)), labelled `manual` on the watch,
 and listed in its own *Measure now* section on the settings page. It is never
 counted in a night's value, the averages, the normal range or the chart.
 
@@ -263,7 +263,7 @@ Two details matter:
   against it and discard the whole window.
 
 The number of rejected intervals is kept with every measurement, shown in the
-history and on the settings page, and included in the CSV and in DataLogging.
+history and on the settings page, and included in the CSV.
 The ten-interval floor applies after filtering: ten intervals of which eight
 were artefacts is not a measurement.
 
@@ -414,40 +414,25 @@ no network requests of its own. The flip side is that the link itself holds the
 measurements, so anyone it is shared with can see them. The page's source is in
 [`docs/restful-hrv/`](../../docs/restful-hrv) in this repository.
 
-## Getting the raw data
+## The record format
 
-Alongside the on-watch history, each completed measurement is appended to a
-DataLogging session as one record of three 4-byte little-endian unsigned
-integers:
+Each measurement is stored as eight bytes, the same on the watch, in the
+phone's cache and in the settings link (`v=2`):
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 4 | UTC timestamp when the measurement ended |
-| 4 | 4 | RMSSD in whole milliseconds, after artefact filtering |
-| 8 | 4 | intervals rejected as artefacts; bit 16 set for a Measure now |
+| 0 | 4 | UTC timestamp when the measurement ended, little-endian |
+| 4 | 2 | RMSSD in whole milliseconds, after artefact filtering |
+| 6 | 2 | intervals rejected as artefacts; the top bit (`0x8000`) marks a Measure now |
 
-The session is tagged `0x48525632` (ASCII `HRV2`), with `DATA_LOGGING_UINT` and
-an item length of 4. Earlier builds logged two-item records without filtering
-under `HRV1`; the tag changed so the two computations cannot be mistaken for
-one another. Unlike the on-watch history, this is not capped.
+To get the measurements off the phone, use *Copy as CSV* or *Download CSV* on
+the settings page. The CSV has one row per measurement, with a `manual` column.
 
-DataLogging data **cannot be read by PebbleKit JS** — only by a native companion
-app built with PebbleKit Android or iOS, or over the Developer Connection:
-
-```sh
-pebble data-logging list --phone <ip>
-pebble data-logging download hrv.bin --session-id <id> --phone <ip>
-```
-
-```python
-import struct, datetime
-data = open("hrv.bin", "rb").read()
-for ts, rmssd, rejected in struct.iter_unpack("<III", data):
-    print(datetime.datetime.fromtimestamp(ts), rmssd, "ms", rejected, "rejected")
-```
-
-For everyday use the settings page above is the easier route; this one exists
-for anyone who wants every measurement ever taken rather than the last 32.
+Builds before 1.9 also logged every measurement to Pebble's DataLogging, under
+the tags `HRV1` and `HRV2`. Nothing in this project ever read that log, so it was
+removed rather than keep sending health data to a channel no one uses
+([REVIEW.md](REVIEW.md), SEC-2). Records already logged by those builds are up
+to the Pebble phone app; this app no longer adds to them.
 
 ## Hosting the settings page
 
@@ -479,8 +464,8 @@ So the button records the request, and:
   losing it.
 
 The diagnostics counters are kept - they describe the worker's behaviour, not
-your data. Records already handed to DataLogging are not affected either;
-nothing on the page can reach those.
+your data. Builds before 1.9 also passed measurements to Pebble's DataLogging;
+nothing on the page can reach those copies.
 
 ## Requirements
 
@@ -515,8 +500,7 @@ Three pieces:
   or end minutes before the worker noticed. On the transition into restful sleep
   it requests an HRV sample period, collects
   `health_service_peek_hrv_ppi_ms()` readings for 120 seconds, computes RMSSD,
-  writes it to both the on-watch history and DataLogging, and releases the
-  sample period.
+  writes it to the on-watch history, and releases the sample period.
 - `src/c/main.c` — the switch and the history list. Writes the setting to
   persistent storage, launches or kills the worker to match, and hands the
   history to PebbleKit JS.
@@ -529,10 +513,8 @@ the persistent-storage keys and the record layout can't drift between them — i
 they did, the switch would silently stop reaching the worker and the history
 would decode as nonsense.
 
-The history is written before the DataLogging call, so a full DataLogging
-session never costs you the number itself. The HRV sample period is released on
-every path out of a measurement, including worker shutdown, so the sensor is
-never left running at the elevated rate.
+The HRV sample period is released on every path out of a measurement, including
+worker shutdown, so the sensor is never left running at the elevated rate.
 
 The watch sends its history on two independent triggers: when PebbleKit JS
 announces itself, and from a timer a couple of seconds after launch. Either one

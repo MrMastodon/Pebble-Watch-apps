@@ -123,7 +123,7 @@ int main(int argc, char **argv) {
   int count = persist_read_data(PERSIST_KEY_HISTORY, history, sizeof(history)) / (int)sizeof(HrvRecord);
   int total = 0;
   for (int k = 0; k < KEYS; k++) total += s_writes[k];
-  printf("measurements stored: %d (data logging: %d)\n", count, s_logged);
+  printf("measurements stored: %d\n", count);
   printf("sensor held at the measuring rate: %ld s\n", s_period_seconds);
   printf("sample period held after the night: %u\n", (unsigned)s_period);
   printf("flash writes: %d total, of which diagnostics %d, history %d\n", total,
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
   #define EXPECT(cond, what) do { if (!(cond)) { printf("FAIL: %s\n", what); failures++; } } while (0)
   EXPECT(count == 5, "five measurements: four restful episodes and one Measure now");
   EXPECT(manual == 1, "exactly one of them flagged manual (the cancelled one stores nothing)");
-  EXPECT(s_logged == 5, "every stored measurement also sent to data logging");
+  EXPECT(s_logged == 0, "nothing sent to data logging");
   EXPECT(s_period == 0, "sensor released at the end");
   EXPECT(s_period_seconds == 4 * 120 + 60 + 30, "sensor held only for the measurement windows");
   EXPECT(s_writes[PERSIST_KEY_DIAG] <= 150 + 100, "diagnostics: Measure now's 150 plus at most 100 for the night");
